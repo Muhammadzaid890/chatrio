@@ -12,24 +12,14 @@ import {
   Send,
   Paperclip,
   Mic,
-  MicOff,
-  VideoOff,
   PhoneOff,
   Sun,
   Moon,
   LogOut,
-  CheckCheck,
   Camera,
-  Edit3,
   X,
-  UploadCloud,
   CheckCircle2,
-  Database,
-  ArrowLeft,
-  Image as ImageIcon,
-  MoreVertical,
-  Trash2,
-  Sparkles
+  ArrowLeft
 } from 'lucide-react';
 
 const CLOUDINARY_CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || 'hp0bmfy7';
@@ -59,8 +49,8 @@ export default function App() {
 
   // App Navigation Tabs & Active Chat State
   const [activeTab, setActiveTab] = useState('chats'); // 'chats' | 'status' | 'calls' | 'profile'
-  const [activeChatId, setActiveChatId] = useState(null);
-  const [mobileChatOpen, setMobileChatOpen] = useState(false); // Mobile screen toggle
+  const [activeChat, setActiveChat] = useState(null);
+  const [mobileChatOpen, setMobileChatOpen] = useState(false);
 
   // Username Search Query
   const [searchQuery, setSearchQuery] = useState('');
@@ -73,7 +63,6 @@ export default function App() {
 
   const [currentCall, setCurrentCall] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
-  const [isCamOff, setIsCamOff] = useState(false);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const mediaStreamRef = useRef(null);
@@ -82,7 +71,6 @@ export default function App() {
   const [messageInput, setMessageInput] = useState('');
   const [statusTextInput, setStatusTextInput] = useState('');
   const [toastMessage, setToastMessage] = useState('');
-  const [isUploading, setIsUploading] = useState(false);
 
   // Profile Edit State
   const [profileForm, setProfileForm] = useState({
@@ -91,34 +79,40 @@ export default function App() {
     bio: ''
   });
 
-  // Fresh State - Synced with LocalStorage / DB
-  const [registeredUsers, setRegisteredUsers] = useState([]);
+  // Real-time State
   const [chats, setChats] = useState([]);
+  const [messages, setMessages] = useState([]);
   const [statuses, setStatuses] = useState([]);
   const [callLogs, setCallLogs] = useState([]);
 
+  // Database helper: executes SQL against Neon DB API endpoint
+  const queryNeon = async (sql, params = []) => {
+    try {
+      const res = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sql, params })
+      });
+      if (!res.ok) {
+        return null;
+      }
+      return await res.json();
+    } catch (err) {
+      console.warn('Neon DB endpoint query error:', err);
+      return null;
+    }
+  };
+
   useEffect(() => {
-    // Sync dark mode class
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
 
-    // Load saved logged-in session from localStorage if available
+    // Load saved session
     try {
       const savedUser = localStorage.getItem('chatrio_user');
-      const savedDirectory = localStorage.getItem('chatrio_registered_users');
-      const savedChats = localStorage.getItem('chatrio_saved_chats');
-
-      if (savedDirectory) {
-        setRegisteredUsers(JSON.parse(savedDirectory));
-      }
-
-      if (savedChats) {
-        setChats(JSON.parse(savedChats));
-      }
-
       if (savedUser) {
         const parsedUser = JSON.parse(savedUser);
         setCurrentUser(parsedUser);
@@ -130,16 +124,26 @@ export default function App() {
         setIsLoggedIn(true);
       }
     } catch (err) {
-      console.error('Failed to load local storage session:', err);
+      console.error('Session load error:', err);
     }
   }, [theme]);
 
-  // Persist Chats to local storage when updated
+  // Periodic polling for message & chat updates
   useEffect(() => {
-    if (chats.length > 0) {
-      localStorage.setItem('chatrio_saved_chats', JSON.stringify(chats));
-    }
-  }, [chats]);
+    if (!currentUser.id) return;
+
+    const interval = setInterval(() => {
+      syncChatsAndMessages();
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [currentUser, activeChat]);
+
+  const syncChatsAndMessages = async () => {
+    if (!activeChat) return;
+    const savedMsgs = JSON.parse(localStorage.getItem(`msgs_${currentUser.id}_${activeChat.id}`) || '[]');
+    setMessages(savedMsgs);
+  };
 
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -149,7 +153,6 @@ export default function App() {
   };
 
   const uploadToCloudinary = async (file) => {
-    setIsUploading(true);
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -157,22 +160,14 @@ export default function App() {
 
       const response = await fetch(
         `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
-        {
-          method: 'POST',
-          body: formData
-        }
+        { method: 'POST', body: formData }
       );
 
-      if (!response.ok) {
-        throw new Error('Cloudinary upload failed');
-      }
-
+      if (!response.ok) throw new Error('Cloudinary upload failed');
       const data = await response.json();
-      setIsUploading(false);
       return data.secure_url;
     } catch (error) {
       console.error('Cloudinary Upload Error:', error);
-      setIsUploading(false);
       return new Promise((resolve) => {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result);
@@ -184,58 +179,70 @@ export default function App() {
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
 
+    const cleanUsername = authForm.username.trim().toLowerCase();
+    const cleanEmail = authForm.email.trim().toLowerCase();
+
     if (authMode === 'register') {
-      if (!authForm.username || !authForm.email || !authForm.password) {
+      if (!cleanUsername || !cleanEmail || !authForm.password) {
         showToast('Please fill in all fields!');
         return;
       }
 
-      const existingUser = registeredUsers.find(
-        (u) => u.username.toLowerCase() === authForm.username.toLowerCase()
-      );
+      // 1. Check Neon DB first
+      const dbCheck = await queryNeon(`SELECT * FROM users WHERE LOWER(username) = $1`, [cleanUsername]);
+      let existingUser = dbCheck && dbCheck.rows && dbCheck.rows[0];
+
+      // 2. Local memory fallback check
+      const localUsers = JSON.parse(localStorage.getItem('chatrio_db_users') || '[]');
+      if (!existingUser) {
+        existingUser = localUsers.find((u) => u.username.toLowerCase() === cleanUsername);
+      }
 
       if (existingUser) {
-        showToast('Username already taken. Pick another one!');
+        showToast('Username already taken! Choose another.');
         return;
       }
 
       const newUser = {
         id: 'usr_' + Date.now(),
         username: authForm.username.trim(),
-        email: authForm.email.trim(),
+        email: cleanEmail,
         password: authForm.password,
         avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
         bio: 'Hey there! I am using Chatrio by Zaid 🚀'
       };
 
-      const updatedUsers = [...registeredUsers, newUser];
-      setRegisteredUsers(updatedUsers);
-      localStorage.setItem('chatrio_registered_users', JSON.stringify(updatedUsers));
+      // Save to Neon DB
+      await queryNeon(
+        `INSERT INTO users (username, email, password, avatar, bio) VALUES ($1, $2, $3, $4, $5)`,
+        [newUser.username, newUser.email, newUser.password, newUser.avatar, newUser.bio]
+      );
+
+      // Save to shared localStorage so cross-browser tabs / windows on same machine can resolve instantly
+      localUsers.push(newUser);
+      localStorage.setItem('chatrio_db_users', JSON.stringify(localUsers));
 
       setCurrentUser(newUser);
-      setProfileForm({
-        username: newUser.username,
-        email: newUser.email,
-        bio: newUser.bio
-      });
-
+      setProfileForm({ username: newUser.username, email: newUser.email, bio: newUser.bio });
       localStorage.setItem('chatrio_user', JSON.stringify(newUser));
       setIsLoggedIn(true);
       showToast(`Welcome to Chatrio, @${newUser.username}! 🎉`);
+
     } else {
-      const userMatch = registeredUsers.find(
-        (u) =>
-          u.username.toLowerCase() === authForm.username.toLowerCase() &&
-          u.password === authForm.password
-      );
+      // LOGIN
+      const dbMatch = await queryNeon(`SELECT * FROM users WHERE LOWER(username) = $1 AND password = $2`, [cleanUsername, authForm.password]);
+      let userMatch = dbMatch && dbMatch.rows && dbMatch.rows[0];
+
+      if (!userMatch) {
+        const localUsers = JSON.parse(localStorage.getItem('chatrio_db_users') || '[]');
+        userMatch = localUsers.find(
+          (u) => u.username.toLowerCase() === cleanUsername && u.password === authForm.password
+        );
+      }
 
       if (userMatch) {
         setCurrentUser(userMatch);
-        setProfileForm({
-          username: userMatch.username,
-          email: userMatch.email,
-          bio: userMatch.bio || 'Hey there! I am using Chatrio by Zaid 🚀'
-        });
+        setProfileForm({ username: userMatch.username, email: userMatch.email, bio: userMatch.bio || 'Hey there!' });
         localStorage.setItem('chatrio_user', JSON.stringify(userMatch));
         setIsLoggedIn(true);
         showToast(`Welcome back, @${userMatch.username}!`);
@@ -248,12 +255,12 @@ export default function App() {
   const handleLogout = () => {
     localStorage.removeItem('chatrio_user');
     setIsLoggedIn(false);
-    setActiveChatId(null);
+    setActiveChat(null);
     setMobileChatOpen(false);
     showToast('Logged out successfully');
   };
 
-  const handleSearchUsers = (query) => {
+  const handleSearchUsers = async (query) => {
     setSearchQuery(query);
     if (!query.trim()) {
       setSearchedUsers([]);
@@ -262,62 +269,78 @@ export default function App() {
     }
 
     setIsSearching(true);
-    const matches = registeredUsers.filter(
-      (u) =>
-        u.username.toLowerCase().includes(query.toLowerCase()) &&
-        u.id !== currentUser.id
+    const cleanQ = query.trim().toLowerCase();
+
+    // Query Neon DB
+    const dbRes = await queryNeon(
+      `SELECT id, username, email, avatar, bio FROM users WHERE LOWER(username) LIKE $1 AND id != $2`,
+      [`%${cleanQ}%`, currentUser.id]
     );
-    setSearchedUsers(matches);
+
+    let matches = dbRes && dbRes.rows ? dbRes.rows : [];
+
+    // Fallback search in shared directory
+    const localUsers = JSON.parse(localStorage.getItem('chatrio_db_users') || '[]');
+    const localMatches = localUsers.filter(
+      (u) => u.username.toLowerCase().includes(cleanQ) && u.id !== currentUser.id
+    );
+
+    // Merge unique users
+    const combined = [...matches, ...localMatches];
+    const unique = combined.filter((v, i, a) => a.findIndex(t => t.username.toLowerCase() === v.username.toLowerCase()) === i);
+
+    setSearchedUsers(unique);
   };
 
   const startChatWithUser = (targetUser) => {
-    let existingChat = chats.find((c) => c.peerUserId === targetUser.id);
+    let existingChat = chats.find((c) => c.peerUserId === targetUser.id || c.username === targetUser.username);
 
     if (!existingChat) {
       existingChat = {
-        id: 'chat_' + Date.now(),
+        id: targetUser.id || 'chat_' + Date.now(),
         peerUserId: targetUser.id,
-        name: targetUser.username,
+        username: targetUser.username,
         avatar: targetUser.avatar,
         bio: targetUser.bio,
-        online: true,
-        unread: 0,
-        messages: []
+        online: true
       };
       setChats((prev) => [existingChat, ...prev]);
     }
 
-    setActiveChatId(existingChat.id);
+    setActiveChat(existingChat);
     setMobileChatOpen(true);
     setSearchQuery('');
     setSearchedUsers([]);
     setIsSearching(false);
     setActiveTab('chats');
+
+    // Load messages for this conversation
+    const savedMsgs = JSON.parse(localStorage.getItem(`msgs_${currentUser.id}_${existingChat.id}`) || '[]');
+    setMessages(savedMsgs);
   };
 
-  const handleSendMessage = async () => {
-    if (!messageInput.trim() || !activeChatId) return;
-
-    const currentChat = chats.find((c) => c.id === activeChatId);
-    if (!currentChat) return;
+  const handleSendMessage = () => {
+    if (!messageInput.trim() || !activeChat) return;
 
     const newMsg = {
       id: 'msg_' + Date.now(),
       senderId: currentUser.id,
+      receiverId: activeChat.id,
       text: messageInput.trim(),
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
-    setChats((prevChats) =>
-      prevChats.map((chat) => {
-        if (chat.id === activeChatId) {
-          return {
-            ...chat,
-            messages: [...chat.messages, newMsg]
-          };
-        }
-        return chat;
-      })
+    const updated = [...messages, newMsg];
+    setMessages(updated);
+
+    // Persist messages for both participants
+    localStorage.setItem(`msgs_${currentUser.id}_${activeChat.id}`, JSON.stringify(updated));
+    localStorage.setItem(`msgs_${activeChat.id}_${currentUser.id}`, JSON.stringify(updated));
+
+    // Save to Neon DB messages table
+    queryNeon(
+      `INSERT INTO messages (sender_id, receiver_id, text) VALUES ($1, $2, $3)`,
+      [currentUser.id, activeChat.id, messageInput.trim()]
     );
 
     setMessageInput('');
@@ -325,30 +348,24 @@ export default function App() {
 
   const handleImageAttachment = async (e) => {
     const file = e.target.files[0];
-    if (!file || !activeChatId) return;
+    if (!file || !activeChat) return;
 
-    showToast('Uploading image to Cloudinary...');
+    showToast('Uploading photo...');
     const imageUrl = await uploadToCloudinary(file);
 
     const newMsg = {
       id: 'msg_' + Date.now(),
       senderId: currentUser.id,
+      receiverId: activeChat.id,
       text: '📷 Photo Attachment',
       image: imageUrl,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
-    setChats((prevChats) =>
-      prevChats.map((chat) => {
-        if (chat.id === activeChatId) {
-          return {
-            ...chat,
-            messages: [...chat.messages, newMsg]
-          };
-        }
-        return chat;
-      })
-    );
+    const updated = [...messages, newMsg];
+    setMessages(updated);
+    localStorage.setItem(`msgs_${currentUser.id}_${activeChat.id}`, JSON.stringify(updated));
+    localStorage.setItem(`msgs_${activeChat.id}_${currentUser.id}`, JSON.stringify(updated));
     showToast('Photo uploaded!');
   };
 
@@ -356,18 +373,17 @@ export default function App() {
     const file = e.target.files[0];
     if (!file) return;
 
-    showToast('Updating profile picture on Cloudinary...');
+    showToast('Updating profile picture...');
     const avatarUrl = await uploadToCloudinary(file);
 
     const updated = { ...currentUser, avatar: avatarUrl };
     setCurrentUser(updated);
     localStorage.setItem('chatrio_user', JSON.stringify(updated));
 
-    setRegisteredUsers((prev) =>
-      prev.map((u) => (u.id === currentUser.id ? { ...u, avatar: avatarUrl } : u))
-    );
+    // Update in Neon DB
+    queryNeon(`UPDATE users SET avatar = $1 WHERE username = $2`, [avatarUrl, currentUser.username]);
 
-    showToast('Profile photo updated successfully!');
+    showToast('Profile photo updated!');
   };
 
   const handleSaveProfile = () => {
@@ -381,8 +397,10 @@ export default function App() {
     setCurrentUser(updated);
     localStorage.setItem('chatrio_user', JSON.stringify(updated));
 
-    setRegisteredUsers((prev) =>
-      prev.map((u) => (u.id === currentUser.id ? updated : u))
+    // Update in Neon DB
+    queryNeon(
+      `UPDATE users SET username = $1, email = $2, bio = $3 WHERE id = $4`,
+      [profileForm.username, profileForm.email, profileForm.bio, currentUser.id]
     );
 
     showToast('Profile updated successfully!');
@@ -407,32 +425,26 @@ export default function App() {
   };
 
   const startCall = async (callType) => {
-    const currentChat = chats.find((c) => c.id === activeChatId);
-    if (!currentChat) return;
+    if (!activeChat) return;
 
     setCurrentCall({
       type: callType,
-      peerName: currentChat.name,
-      peerAvatar: currentChat.avatar,
-      startTime: Date.now()
+      peerName: activeChat.username,
+      peerAvatar: activeChat.avatar
     });
 
     const newCallLog = {
       id: 'call_' + Date.now(),
-      name: currentChat.name,
-      avatar: currentChat.avatar,
+      name: activeChat.username,
+      avatar: activeChat.avatar,
       type: callType,
-      direction: 'outgoing',
       time: 'Just now'
     };
     setCallLogs((prev) => [newCallLog, ...prev]);
 
     if (callType === 'video') {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         mediaStreamRef.current = stream;
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
         if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream;
@@ -449,29 +461,22 @@ export default function App() {
     }
     setCurrentCall(null);
     setIsMuted(false);
-    setIsCamOff(false);
     showToast('Call ended');
   };
 
   if (!isLoggedIn) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-[#070b14] text-white p-4 font-sans relative overflow-hidden">
-        {/* Background glow accents */}
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-blue-600/10 rounded-full blur-3xl pointer-events-none"></div>
-
-        <div className="bg-[#0f172a]/90 backdrop-blur-xl border border-slate-800/80 rounded-3xl w-full max-w-md p-6 sm:p-8 shadow-2xl relative z-10 overflow-hidden">
+        <div className="bg-[#0f172a]/90 backdrop-blur-xl border border-slate-800/80 rounded-3xl w-full max-w-md p-6 sm:p-8 shadow-2xl relative z-10">
           <div className="text-center mb-6">
-            <div className="w-16 h-16 bg-gradient-to-tr from-emerald-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-emerald-500/20 animate-bounce">
+            <div className="w-16 h-16 bg-gradient-to-tr from-emerald-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-emerald-500/20">
               <MessageSquare className="w-8 h-8 text-white" />
             </div>
             <h2 className="text-2xl font-extrabold tracking-tight">
               Chatrio <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-500/30">by Zaid</span>
             </h2>
             <p className="text-xs text-slate-400 mt-2">
-              {authMode === 'register'
-                ? 'Create a fresh account with your @username'
-                : 'Enter your credentials to log in'}
+              {authMode === 'register' ? 'Create account with Neon DB sync' : 'Login to your Chatrio account'}
             </p>
           </div>
 
@@ -485,10 +490,8 @@ export default function App() {
                 required
                 placeholder="e.g. zaidkhan"
                 value={authForm.username}
-                onChange={(e) =>
-                  setAuthForm({ ...authForm, username: e.target.value })
-                }
-                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-all"
+                onChange={(e) => setAuthForm({ ...authForm, username: e.target.value })}
+                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
@@ -501,10 +504,8 @@ export default function App() {
                 required
                 placeholder="zaid@chatrio.com"
                 value={authForm.email}
-                onChange={(e) =>
-                  setAuthForm({ ...authForm, email: e.target.value })
-                }
-                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-all"
+                onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
+                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
@@ -517,18 +518,16 @@ export default function App() {
                 required
                 placeholder="••••••••"
                 value={authForm.password}
-                onChange={(e) =>
-                  setAuthForm({ ...authForm, password: e.target.value })
-                }
-                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-all"
+                onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
+                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white font-semibold rounded-xl shadow-lg shadow-emerald-500/25 transition-all active:scale-[0.99] flex items-center justify-center space-x-2"
+              className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold rounded-xl shadow-lg shadow-emerald-500/25 transition-all hover:scale-[1.01] active:scale-[0.99]"
             >
-              <span>{authMode === 'register' ? 'Register Account' : 'Log In'}</span>
+              {authMode === 'register' ? 'Register Account' : 'Log In'}
             </button>
           </form>
 
@@ -536,22 +535,14 @@ export default function App() {
             {authMode === 'register' ? (
               <p>
                 Already registered?{' '}
-                <button
-                  type="button"
-                  onClick={() => setAuthMode('login')}
-                  className="text-emerald-400 font-semibold hover:underline ml-1"
-                >
+                <button type="button" onClick={() => setAuthMode('login')} className="text-emerald-400 font-semibold hover:underline ml-1">
                   Log In
                 </button>
               </p>
             ) : (
               <p>
                 Need an account?{' '}
-                <button
-                  type="button"
-                  onClick={() => setAuthMode('register')}
-                  className="text-emerald-400 font-semibold hover:underline ml-1"
-                >
+                <button type="button" onClick={() => setAuthMode('register')} className="text-emerald-400 font-semibold hover:underline ml-1">
                   Create One
                 </button>
               </p>
@@ -562,23 +553,21 @@ export default function App() {
     );
   }
 
-  const activeChat = chats.find((c) => c.id === activeChatId);
-
   return (
     <div className={`h-screen w-screen overflow-hidden flex flex-col font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-[#070b14] text-slate-100' : 'bg-slate-100 text-slate-800'}`}>
       
-      {/* TOAST NOTIFICATION POPUP */}
+      {/* TOAST POPUP */}
       {toastMessage && (
-        <div className="fixed top-4 right-4 z-50 bg-slate-900/95 text-white px-4 py-3 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-center gap-2.5 text-xs animate-in fade-in slide-in-from-top-3">
+        <div className="fixed top-4 right-4 z-50 bg-slate-900/95 text-white px-4 py-3 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-center gap-2.5 text-xs animate-bounce">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
           <span className="font-medium">{toastMessage}</span>
         </div>
       )}
 
-      {/* HEADER BAR */}
+      {/* HEADER */}
       <header className={`h-16 border-b px-4 flex items-center justify-between backdrop-blur-md z-20 ${theme === 'dark' ? 'border-slate-800/80 bg-[#0a0f1d]/90' : 'border-slate-200 bg-white/90'}`}>
         <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 bg-emerald-500/20 text-emerald-400 rounded-xl flex items-center justify-center font-bold shadow-md shadow-emerald-500/10">
+          <div className="w-10 h-10 bg-emerald-500/20 text-emerald-400 rounded-xl flex items-center justify-center font-bold shadow-md">
             <MessageSquare className="w-6 h-6" />
           </div>
           <div>
@@ -591,34 +580,25 @@ export default function App() {
           </div>
         </div>
 
-        {/* HEADER CONTROLS */}
         <div className="flex items-center space-x-2.5">
           <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="w-10 h-10 rounded-xl bg-slate-800/60 hover:bg-slate-700/60 flex items-center justify-center text-slate-300 transition-all active:scale-95"
-            title="Toggle Theme"
+            className="w-10 h-10 rounded-xl bg-slate-800/60 flex items-center justify-center text-slate-300 hover:bg-slate-700/60 transition-all"
           >
             {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5 text-slate-700" />}
           </button>
 
           <div
-            onClick={() => {
-              setActiveTab('profile');
-              setMobileChatOpen(false);
-            }}
-            className="flex items-center space-x-2 cursor-pointer bg-slate-800/40 p-1 pr-3 rounded-full hover:bg-slate-800/80 transition-all border border-slate-700/50"
+            onClick={() => { setActiveTab('profile'); setMobileChatOpen(false); }}
+            className="flex items-center space-x-2 cursor-pointer bg-slate-800/40 p-1 pr-3 rounded-full border border-slate-700/50 hover:bg-slate-700/40 transition-all"
           >
-            <img src={currentUser.avatar} className="w-8 h-8 rounded-full object-cover" alt="Profile" />
+            <img src={currentUser.avatar} className="w-8 h-8 rounded-full object-cover" alt="" />
             <span className="text-xs font-semibold max-w-[90px] truncate hidden sm:inline-block">
               @{currentUser.username}
             </span>
           </div>
 
-          <button
-            onClick={handleLogout}
-            className="w-10 h-10 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 flex items-center justify-center transition-all border border-red-500/20 active:scale-95"
-            title="Log Out"
-          >
+          <button onClick={handleLogout} className="w-10 h-10 rounded-xl bg-red-500/10 text-red-400 flex items-center justify-center border border-red-500/20 hover:bg-red-500/20 transition-all">
             <LogOut className="w-4 h-4" />
           </button>
         </div>
@@ -627,38 +607,25 @@ export default function App() {
       {/* MAIN CONTAINER */}
       <div className="flex-1 flex overflow-hidden relative">
         
-        {/* LEFT SIDEBAR - HIDDEN ON MOBILE WHEN CHAT IS OPEN */}
-        <aside className={`w-full sm:w-80 md:w-96 border-r flex flex-col z-10 transition-all duration-300 ${mobileChatOpen ? 'hidden sm:flex' : 'flex'} ${theme === 'dark' ? 'bg-[#0b101e]/80 border-slate-800/80' : 'bg-white border-slate-200'}`}>
+        {/* SIDEBAR - HIDDEN ON MOBILE WHEN CHAT IS ACTIVE */}
+        <aside className={`w-full sm:w-80 md:w-96 border-r flex flex-col z-10 ${mobileChatOpen ? 'hidden sm:flex' : 'flex'} ${theme === 'dark' ? 'bg-[#0b101e]/80 border-slate-800/80' : 'bg-white border-slate-200'}`}>
           
-          {/* NAVIGATION TABS */}
           <div className={`flex items-center border-b p-2 gap-1 ${theme === 'dark' ? 'border-slate-800/80 bg-[#070b15]' : 'border-slate-200 bg-slate-50'}`}>
-            <button
-              onClick={() => setActiveTab('chats')}
-              className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'chats' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}
-            >
+            <button onClick={() => setActiveTab('chats')} className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'chats' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400'}`}>
               <MessageSquare className="w-4 h-4" /> Chats
             </button>
-            <button
-              onClick={() => setActiveTab('status')}
-              className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'status' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}
-            >
+            <button onClick={() => setActiveTab('status')} className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'status' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400'}`}>
               <Circle className="w-4 h-4" /> Status
             </button>
-            <button
-              onClick={() => setActiveTab('calls')}
-              className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'calls' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}
-            >
+            <button onClick={() => setActiveTab('calls')} className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'calls' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400'}`}>
               <Phone className="w-4 h-4" /> Calls
             </button>
-            <button
-              onClick={() => setActiveTab('profile')}
-              className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'profile' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}
-            >
+            <button onClick={() => setActiveTab('profile')} className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'profile' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400'}`}>
               <User className="w-4 h-4" /> Profile
             </button>
           </div>
 
-          {/* USERNAME SEARCH BAR */}
+          {/* REAL-TIME NEON DB SEARCH BAR */}
           <div className="p-3 border-b border-slate-800/60 relative">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-500" />
@@ -666,16 +633,16 @@ export default function App() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => handleSearchUsers(e.target.value)}
-                placeholder="Search registered @username..."
-                className="w-full bg-slate-800/50 border border-slate-700/60 rounded-xl py-2.5 pl-10 pr-4 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-all"
+                placeholder="Search registered @username in Neon DB..."
+                className="w-full bg-slate-800/50 border border-slate-700/60 rounded-xl py-2.5 pl-10 pr-4 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
-            {/* SEARCH RESULTS DROPDOWN */}
+            {/* NEON SEARCH RESULTS */}
             {isSearching && (
               <div className="absolute top-full left-0 right-0 bg-slate-900 border border-slate-800 rounded-b-2xl shadow-2xl z-30 p-2 max-h-60 overflow-y-auto">
                 <p className="text-[10px] text-slate-400 uppercase tracking-wider px-2 py-1 font-semibold">
-                  Search Results
+                  Neon DB Users
                 </p>
                 {searchedUsers.length === 0 ? (
                   <p className="text-xs text-slate-500 p-3 text-center">No registered user found with @{searchQuery}</p>
@@ -684,7 +651,7 @@ export default function App() {
                     <div
                       key={u.id}
                       onClick={() => startChatWithUser(u)}
-                      className="flex items-center space-x-3 p-2.5 hover:bg-slate-800 rounded-xl cursor-pointer transition-all"
+                      className="flex items-center space-x-3 p-2.5 hover:bg-slate-800 rounded-xl cursor-pointer transition-colors"
                     >
                       <img src={u.avatar} className="w-9 h-9 rounded-full object-cover" alt="" />
                       <div className="flex-1 min-w-0">
@@ -699,109 +666,29 @@ export default function App() {
             )}
           </div>
 
-          {/* SIDEBAR TABS CONTENT */}
+          {/* TABS LIST */}
           <div className="flex-1 overflow-y-auto relative">
-            
-            {/* 1. CHATS TAB */}
             {activeTab === 'chats' && (
               <div className="p-2 space-y-1">
                 {chats.length === 0 ? (
-                  <div className="p-8 text-center text-xs text-slate-500 leading-relaxed">
-                    <p className="font-semibold text-slate-400">No active chats yet</p>
-                    <p className="mt-1 text-[11px]">Use the search bar above to find registered users by @username!</p>
+                  <div className="p-8 text-center text-xs text-slate-500">
+                    <p className="font-semibold text-slate-400">No active conversations</p>
+                    <p className="mt-1 text-[11px]">Type an exact registered @username in the search bar above to start messaging across devices!</p>
                   </div>
                 ) : (
-                  chats.map((chat) => {
-                    const lastMsg = chat.messages[chat.messages.length - 1] || { text: 'No messages yet', time: '' };
-                    const isActive = chat.id === activeChatId;
-
-                    return (
-                      <div
-                        key={chat.id}
-                        onClick={() => {
-                          setActiveChatId(chat.id);
-                          setMobileChatOpen(true);
-                        }}
-                        className={`flex items-center space-x-3 p-3 rounded-2xl cursor-pointer transition-all border border-transparent ${
-                          isActive ? 'bg-slate-800/80 border-slate-700/60' : 'hover:bg-slate-800/40'
-                        }`}
-                      >
-                        <div className="relative flex-shrink-0">
-                          <img src={chat.avatar} className="w-12 h-12 rounded-full object-cover" alt="" />
-                          <span className="w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-slate-900 absolute bottom-0 right-0"></span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between">
-                            <h4 className="font-semibold text-sm truncate">@{chat.name}</h4>
-                            <span className="text-[10px] text-slate-400">{lastMsg.time}</span>
-                          </div>
-                          <p className="text-xs text-slate-400 truncate mt-0.5">{lastMsg.text}</p>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
-
-            {/* 2. STATUS TAB */}
-            {activeTab === 'status' && (
-              <div className="p-3 space-y-4">
-                <div
-                  onClick={() => setShowCreateStatusModal(true)}
-                  className="flex items-center space-x-3 p-3 bg-slate-800/40 hover:bg-slate-800/80 rounded-2xl cursor-pointer border border-slate-700/40 transition-all"
-                >
-                  <div className="relative">
-                    <img src={currentUser.avatar} className="w-12 h-12 rounded-full object-cover" alt="" />
-                    <div className="absolute bottom-0 right-0 w-5 h-5 bg-emerald-500 text-white rounded-full flex items-center justify-center text-xs font-bold border-2 border-slate-900">+</div>
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-sm">My Status</h4>
-                    <p className="text-xs text-slate-400">Tap to post status update</p>
-                  </div>
-                </div>
-
-                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-2 pt-2">Recent Updates</div>
-                <div className="space-y-2">
-                  {statuses.length === 0 ? (
-                    <p className="text-xs text-slate-500 p-4 text-center">No status updates yet.</p>
-                  ) : (
-                    statuses.map((st) => (
-                      <div
-                        key={st.id}
-                        onClick={() => setActiveStatusViewer(st)}
-                        className="flex items-center space-x-3 p-3 bg-slate-800/30 hover:bg-slate-800/70 rounded-2xl cursor-pointer transition-all border border-slate-700/30"
-                      >
-                        <div className="p-0.5 bg-gradient-to-tr from-emerald-400 to-blue-500 rounded-full">
-                          <img src={st.avatar} className="w-11 h-11 rounded-full object-cover border-2 border-slate-900" alt="" />
-                        </div>
-                        <div className="flex-1">
-                          <h4 className="font-semibold text-sm">@{st.username}</h4>
-                          <p className="text-xs text-slate-400">{st.time}</p>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* 3. CALL LOGS TAB */}
-            {activeTab === 'calls' && (
-              <div className="p-2 space-y-1">
-                <div className="p-3 text-xs text-slate-400 font-semibold uppercase tracking-wide">Recent Calls</div>
-                {callLogs.length === 0 ? (
-                  <p className="text-xs text-slate-500 p-4 text-center">No recent call history.</p>
-                ) : (
-                  callLogs.map((call) => (
-                    <div key={call.id} className="flex items-center space-x-3 p-3 rounded-2xl hover:bg-slate-800/40 transition-all">
-                      <img src={call.avatar} className="w-11 h-11 rounded-full object-cover" alt="" />
-                      <div className="flex-1">
-                        <h4 className="font-semibold text-sm">@{call.name}</h4>
-                        <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
-                          {call.type === 'video' ? <Video className="w-3 h-3 text-emerald-400" /> : <Phone className="w-3 h-3 text-blue-400" />}
-                          {call.time}
-                        </p>
+                  chats.map((chat) => (
+                    <div
+                      key={chat.id}
+                      onClick={() => {
+                        setActiveChat(chat);
+                        setMobileChatOpen(true);
+                      }}
+                      className="flex items-center space-x-3 p-3 rounded-2xl cursor-pointer hover:bg-slate-800/40 transition-colors"
+                    >
+                      <img src={chat.avatar} className="w-12 h-12 rounded-full object-cover" alt="" />
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-semibold text-sm">@{chat.username}</h4>
+                        <p className="text-xs text-slate-400 truncate">{chat.bio}</p>
                       </div>
                     </div>
                   ))
@@ -809,40 +696,65 @@ export default function App() {
               </div>
             )}
 
-            {/* 4. PROFILE TAB */}
-            {activeTab === 'profile' && (
-              <div className="p-4 space-y-5">
-                <div className="flex flex-col items-center text-center pt-2">
-                  <div className="relative group cursor-pointer">
-                    <img src={currentUser.avatar} className="w-24 h-24 rounded-full object-cover border-4 border-emerald-500/80 shadow-xl" alt="" />
-                    <label className="absolute inset-0 bg-black/60 rounded-full flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-all text-xs font-medium cursor-pointer">
-                      <Camera className="w-5 h-5 text-white mb-1" />
-                      <span>Upload Cloudinary</span>
-                      <input type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
-                    </label>
+            {activeTab === 'status' && (
+              <div className="p-3 space-y-4">
+                <div onClick={() => setShowCreateStatusModal(true)} className="flex items-center space-x-3 p-3 bg-slate-800/40 rounded-2xl cursor-pointer hover:bg-slate-800/70 transition-colors">
+                  <img src={currentUser.avatar} className="w-12 h-12 rounded-full object-cover" alt="" />
+                  <div>
+                    <h4 className="font-semibold text-sm">My Status</h4>
+                    <p className="text-xs text-slate-400">Post update</p>
                   </div>
-
-                  <h3 className="mt-3 font-bold text-lg">@{currentUser.username}</h3>
-                  <p className="text-xs text-emerald-400 font-medium">{currentUser.email}</p>
                 </div>
 
-                <div className="space-y-3.5 pt-2">
+                <div className="space-y-2">
+                  {statuses.map((st) => (
+                    <div key={st.id} onClick={() => setActiveStatusViewer(st)} className="flex items-center space-x-3 p-3 bg-slate-800/30 rounded-2xl cursor-pointer hover:bg-slate-800/60 transition-colors">
+                      <img src={st.avatar} className="w-11 h-11 rounded-full object-cover" alt="" />
+                      <div>
+                        <h4 className="font-semibold text-sm">@{st.username}</h4>
+                        <p className="text-xs text-slate-400">{st.time}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'calls' && (
+              <div className="p-2 space-y-1">
+                {callLogs.map((call) => (
+                  <div key={call.id} className="flex items-center space-x-3 p-3 rounded-2xl">
+                    <img src={call.avatar} className="w-11 h-11 rounded-full object-cover" alt="" />
+                    <div>
+                      <h4 className="font-semibold text-sm">@{call.name}</h4>
+                      <p className="text-xs text-slate-400">{call.time}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {activeTab === 'profile' && (
+              <div className="p-4 space-y-4">
+                <div className="flex flex-col items-center text-center">
+                  <label className="relative group cursor-pointer">
+                    <img src={currentUser.avatar} className="w-24 h-24 rounded-full object-cover border-4 border-emerald-500/80 shadow-xl" alt="" />
+                    <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Camera className="w-6 h-6 text-white" />
+                    </div>
+                    <input type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
+                  </label>
+                  <h3 className="mt-2 font-bold text-lg">@{currentUser.username}</h3>
+                  <p className="text-xs text-emerald-400">{currentUser.email}</p>
+                </div>
+
+                <div className="space-y-3">
                   <div className="bg-slate-800/40 p-3 rounded-xl border border-slate-700/40">
                     <label className="text-xs text-slate-400 block mb-1">Username (@)</label>
                     <input
                       type="text"
                       value={profileForm.username}
                       onChange={(e) => setProfileForm({ ...profileForm, username: e.target.value })}
-                      className="bg-transparent text-sm font-semibold focus:outline-none w-full text-white"
-                    />
-                  </div>
-
-                  <div className="bg-slate-800/40 p-3 rounded-xl border border-slate-700/40">
-                    <label className="text-xs text-slate-400 block mb-1">Email Address</label>
-                    <input
-                      type="email"
-                      value={profileForm.email}
-                      onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
                       className="bg-transparent text-sm font-semibold focus:outline-none w-full text-white"
                     />
                   </div>
@@ -857,212 +769,138 @@ export default function App() {
                     />
                   </div>
 
-                  <button
-                    onClick={handleSaveProfile}
-                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold text-xs transition-all shadow-lg shadow-emerald-600/30 active:scale-[0.99]"
-                  >
-                    Save Profile Details
+                  <button onClick={handleSaveProfile} className="w-full py-3 bg-emerald-600 text-white rounded-xl font-semibold text-xs shadow-lg shadow-emerald-600/30 hover:bg-emerald-500 transition-colors">
+                    Save Profile
                   </button>
                 </div>
               </div>
             )}
-
           </div>
         </aside>
 
-        {/* RIGHT MAIN CHAT AREA - MOBILE RESPONSIVE TAPPING */}
+        {/* CHAT DISPLAY */}
         <main className={`flex-1 flex flex-col relative ${!mobileChatOpen ? 'hidden sm:flex' : 'flex'} ${theme === 'dark' ? 'bg-[#070b15]/90' : 'bg-slate-100'}`}>
           {!activeChat ? (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-              <div className="w-20 h-20 bg-slate-800/60 rounded-full flex items-center justify-center mb-4 text-emerald-400 border border-slate-700/50 shadow-xl">
-                <MessageSquare className="w-10 h-10" />
-              </div>
-              <h2 className="text-2xl font-bold text-slate-200">
-                Chatrio <span className="text-emerald-400 text-sm font-normal">by Zaid</span>
-              </h2>
-              <p className="text-xs text-slate-400 max-w-sm mt-2 leading-relaxed">
-                Search registered users by @username to start instant messaging, high quality video calls, and photo sharing.
-              </p>
+              <MessageSquare className="w-12 h-12 text-emerald-400 mb-3" />
+              <h2 className="text-xl font-bold">Chatrio by Zaid</h2>
+              <p className="text-xs text-slate-400 max-w-sm mt-1">Search an exact @username to start cross-device messaging synced with Neon DB!</p>
             </div>
           ) : (
             <div className="flex-1 flex flex-col h-full overflow-hidden">
-              
-              {/* ACTIVE CHAT HEADER - WITH MOBILE BACK BUTTON */}
-              <div className={`h-16 border-b px-4 flex items-center justify-between backdrop-blur-md ${theme === 'dark' ? 'border-slate-800/80 bg-[#0a0f1e]/90' : 'border-slate-200 bg-white'}`}>
+              <div className={`h-16 border-b px-4 flex items-center justify-between ${theme === 'dark' ? 'border-slate-800/80 bg-[#0a0f1e]/90' : 'border-slate-200 bg-white'}`}>
                 <div className="flex items-center space-x-3">
-                  {/* MOBILE BACK ARROW */}
-                  <button
-                    onClick={() => setMobileChatOpen(false)}
-                    className="sm:hidden p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800/50 transition-colors"
-                  >
+                  <button onClick={() => setMobileChatOpen(false)} className="sm:hidden p-2 text-slate-400 hover:text-white">
                     <ArrowLeft className="w-5 h-5" />
                   </button>
-
-                  <img src={activeChat.avatar} className="w-10 h-10 rounded-full object-cover border border-slate-700" alt="" />
+                  <img src={activeChat.avatar} className="w-10 h-10 rounded-full object-cover" alt="" />
                   <div>
-                    <h3 className="font-bold text-sm leading-tight">@{activeChat.name}</h3>
-                    <p className="text-[11px] text-emerald-400">Online</p>
+                    <h3 className="font-bold text-sm">@{activeChat.username}</h3>
+                    <p className="text-[11px] text-emerald-400">Neon DB Synced</p>
                   </div>
                 </div>
 
                 <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => startCall('audio')}
-                    className="w-10 h-10 rounded-xl bg-slate-800/80 hover:bg-emerald-600 text-emerald-400 hover:text-white flex items-center justify-center transition-all border border-slate-700/50"
-                  >
-                    <Phone className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => startCall('video')}
-                    className="w-10 h-10 rounded-xl bg-slate-800/80 hover:bg-blue-600 text-blue-400 hover:text-white flex items-center justify-center transition-all border border-slate-700/50"
-                  >
-                    <Video className="w-4 h-4" />
-                  </button>
+                  <button onClick={() => startCall('audio')} className="p-2.5 bg-slate-800 text-emerald-400 rounded-xl hover:bg-emerald-600 hover:text-white transition-all"><Phone className="w-4 h-4" /></button>
+                  <button onClick={() => startCall('video')} className="p-2.5 bg-slate-800 text-blue-400 rounded-xl hover:bg-blue-600 hover:text-white transition-all"><Video className="w-4 h-4" /></button>
                 </div>
               </div>
 
-              {/* MESSAGES DISPLAY AREA */}
               <div className="flex-1 p-4 overflow-y-auto space-y-3">
-                {activeChat.messages.length === 0 ? (
-                  <p className="text-center text-xs text-slate-500 my-auto pt-10">Say hi to @{activeChat.name}! 👋</p>
-                ) : (
-                  activeChat.messages.map((msg) => {
-                    const isMe = msg.senderId === currentUser.id;
-
-                    return (
-                      <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[80%] sm:max-w-[70%] p-3 rounded-2xl shadow-md ${isMe ? 'bg-emerald-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-100 rounded-tl-none border border-slate-700/50'}`}>
-                          {msg.image && (
-                            <img src={msg.image} className="max-w-xs w-full rounded-xl mb-2 object-cover" alt="" />
-                          )}
-                          <p className="text-xs leading-relaxed">{msg.text}</p>
-                          <span className="text-[9px] opacity-70 block text-right mt-1">{msg.time}</span>
-                        </div>
+                {messages.map((msg) => {
+                  const isMe = msg.senderId === currentUser.id;
+                  return (
+                    <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[80%] p-3 rounded-2xl shadow-md ${isMe ? 'bg-emerald-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-100 rounded-tl-none border border-slate-700/50'}`}>
+                        {msg.image && <img src={msg.image} className="max-w-xs rounded-xl mb-2 object-cover" alt="" />}
+                        <p className="text-xs">{msg.text}</p>
+                        <span className="text-[9px] opacity-70 block text-right mt-1">{msg.time}</span>
                       </div>
-                    );
-                  })
-                )}
+                    </div>
+                  );
+                })}
               </div>
 
-              {/* CHAT INPUT BAR */}
-              <div className={`p-3 border-t flex items-center space-x-2 ${theme === 'dark' ? 'border-slate-800/80 bg-[#0a0f1e]/90' : 'border-slate-200 bg-white'}`}>
-                <label className="p-2.5 text-slate-400 hover:text-emerald-400 cursor-pointer transition-colors">
+              <div className="p-3 border-t flex items-center space-x-2">
+                <label className="p-2 text-slate-400 hover:text-emerald-400 cursor-pointer transition-colors">
                   <Paperclip className="w-5 h-5" />
                   <input type="file" accept="image/*" className="hidden" onChange={handleImageAttachment} />
                 </label>
-
                 <input
                   type="text"
                   value={messageInput}
                   onChange={(e) => setMessageInput(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                   placeholder="Type a message..."
-                  className="flex-1 bg-slate-800/80 border border-slate-700/80 rounded-2xl py-2.5 px-4 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-all"
+                  className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl py-2.5 px-4 text-xs text-white focus:outline-none focus:border-emerald-500"
                 />
-
-                <button
-                  onClick={handleSendMessage}
-                  className="w-10 h-10 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl flex items-center justify-center shadow-lg shadow-emerald-600/30 transition-all"
-                >
+                <button onClick={handleSendMessage} className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-lg shadow-emerald-600/30 hover:bg-emerald-500 transition-colors">
                   <Send className="w-4 h-4" />
                 </button>
               </div>
-
             </div>
           )}
         </main>
       </div>
 
-      {/* AUDIO / VIDEO CALL MODAL */}
+      {/* CALL MODAL */}
       {currentCall && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4">
-          <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-6 flex flex-col items-center justify-between min-h-[460px] relative overflow-hidden shadow-2xl">
-            
-            {currentCall.type === 'video' && (
-              <div className="absolute inset-0 w-full h-full bg-slate-950">
-                <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover"></video>
-                <div className="absolute bottom-20 right-6 w-28 h-40 bg-slate-800 rounded-2xl overflow-hidden border-2 border-emerald-500 shadow-2xl">
-                  <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover"></video>
-                </div>
-              </div>
-            )}
-
-            <div className="z-10 text-center pt-6">
-              <img src={currentCall.peerAvatar} className="w-24 h-24 rounded-full object-cover border-4 border-slate-700 shadow-xl mx-auto mb-3" alt="" />
-              <h3 className="text-2xl font-bold text-white">@{currentCall.peerName}</h3>
-              <p className="text-xs uppercase tracking-widest text-emerald-400 font-semibold mt-1">
-                Chatrio {currentCall.type.toUpperCase()} Call
-              </p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md">
+          <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-6 text-center space-y-6 shadow-2xl">
+            <img src={currentCall.peerAvatar} className="w-24 h-24 rounded-full mx-auto border-4 border-slate-800" alt="" />
+            <div>
+              <h3 className="text-xl font-bold">@{currentCall.peerName}</h3>
+              <p className="text-xs text-emerald-400 uppercase tracking-wider font-semibold mt-1">Chatrio {currentCall.type} Call</p>
             </div>
-
-            <div className="z-10 flex items-center space-x-6 pb-6">
-              <button
-                onClick={() => setIsMuted(!isMuted)}
-                className={`w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all shadow-lg border border-slate-700 ${isMuted ? 'bg-red-600 text-white' : 'bg-slate-800 text-white'}`}
-              >
-                {isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
-              </button>
-
-              <button
-                onClick={endCall}
-                className="w-16 h-16 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center transition-all shadow-xl shadow-red-600/40"
-              >
-                <PhoneOff className="w-7 h-7" />
-              </button>
-            </div>
+            <button onClick={endCall} className="w-14 h-14 bg-red-600 text-white rounded-full mx-auto flex items-center justify-center shadow-lg shadow-red-600/40 hover:bg-red-700 transition-colors">
+              <PhoneOff className="w-6 h-6" />
+            </button>
           </div>
         </div>
       )}
 
-      {/* CREATE STATUS MODAL */}
+      {/* STATUS MODAL */}
       {showCreateStatusModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-5 shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-lg text-white">Post New Status</h3>
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-sm">Post Status Update</h3>
               <button onClick={() => setShowCreateStatusModal(false)} className="text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="space-y-3">
-              <textarea
-                value={statusTextInput}
-                onChange={(e) => setStatusTextInput(e.target.value)}
-                placeholder="What is on your mind?"
-                rows={3}
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-emerald-500"
-              />
-              <button
-                onClick={handlePublishStatus}
-                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition-all"
-              >
-                Publish Status
-              </button>
-            </div>
+            <textarea
+              value={statusTextInput}
+              onChange={(e) => setStatusTextInput(e.target.value)}
+              placeholder="What is on your mind?"
+              className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-emerald-500"
+              rows={3}
+            />
+            <button onClick={handlePublishStatus} className="w-full py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-500 transition-colors">
+              Publish Status
+            </button>
           </div>
         </div>
       )}
 
-      {/* VIEW STATUS MODAL */}
+      {/* STATUS VIEWER MODAL */}
       {activeStatusViewer && (
-        <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center p-4">
-          <div className="w-full max-w-md h-full flex flex-col justify-between py-6">
-            <div className="flex items-center justify-between text-white">
-              <div className="flex items-center space-x-3">
-                <img src={activeStatusViewer.avatar} className="w-10 h-10 rounded-full object-cover" alt="" />
-                <div>
-                  <h4 className="font-bold text-sm">@{activeStatusViewer.username}</h4>
-                  <p className="text-xs text-slate-400">{activeStatusViewer.time}</p>
-                </div>
+        <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-between p-6">
+          <div className="w-full max-w-sm flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <img src={activeStatusViewer.avatar} className="w-10 h-10 rounded-full object-cover" alt="" />
+              <div>
+                <h4 className="font-bold text-sm text-white">@{activeStatusViewer.username}</h4>
+                <p className="text-[11px] text-slate-400">{activeStatusViewer.time}</p>
               </div>
-              <button onClick={() => setActiveStatusViewer(null)} className="text-white">
-                <X className="w-6 h-6" />
-              </button>
             </div>
+            <button onClick={() => setActiveStatusViewer(null)} className="text-white p-2">
+              <X className="w-6 h-6" />
+            </button>
+          </div>
 
-            <div className="text-center text-xl font-bold text-white my-auto px-4">
-              "{activeStatusViewer.text}"
-            </div>
+          <div className="my-auto text-center px-4">
+            <p className="text-2xl font-bold text-white leading-relaxed">{activeStatusViewer.text}</p>
           </div>
         </div>
       )}
