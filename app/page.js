@@ -11,7 +11,6 @@ import {
   Plus,
   Send,
   Paperclip,
-  Mic,
   PhoneOff,
   Sun,
   Moon,
@@ -62,7 +61,6 @@ export default function App() {
   const [activeStatusViewer, setActiveStatusViewer] = useState(null);
 
   const [currentCall, setCurrentCall] = useState(null);
-  const [isMuted, setIsMuted] = useState(false);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const mediaStreamRef = useRef(null);
@@ -103,7 +101,24 @@ export default function App() {
     }
   };
 
+  // Helper to format "Last Seen" / "Active Now"
+  const formatLastSeen = (lastSeenTime) => {
+    if (!lastSeenTime) return 'Offline';
+    const diffInSeconds = Math.floor((new Date() - new Date(lastSeenTime)) / 1000);
+
+    if (diffInSeconds < 20) return 'Active Now';
+    if (diffInSeconds < 60) return 'Last seen just now';
+    if (diffInSeconds < 3600) return `Last seen ${Math.floor(diffInSeconds / 60)}m ago`;
+    if (diffInSeconds < 86400) return `Last seen ${Math.floor(diffInSeconds / 3600)}h ago`;
+
+    const d = new Date(lastSeenTime);
+    return `Last seen ${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  };
+
   useEffect(() => {
+    // Set Document Tab Title
+    document.title = 'Chatrio by Zaid';
+
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
     } else {
@@ -128,22 +143,54 @@ export default function App() {
     }
   }, [theme]);
 
-  // Periodic polling for message & chat updates
+  // Heartbeat to update current user's last_seen in Neon DB & fetch active chat status
   useEffect(() => {
     if (!currentUser.id) return;
 
-    const interval = setInterval(() => {
-      syncChatsAndMessages();
-    }, 3000);
+    // 1. Initial Heartbeat + Table column check
+    const updateHeartbeat = async () => {
+      // Ensure last_seen column exists in Neon DB
+      await queryNeon(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP DEFAULT NOW();`);
+      await queryNeon(`UPDATE users SET last_seen = NOW() WHERE id = $1`, [currentUser.id]);
+    };
 
-    return () => clearInterval(interval);
-  }, [currentUser, activeChat]);
+    updateHeartbeat();
 
-  const syncChatsAndMessages = async () => {
-    if (!activeChat) return;
-    const savedMsgs = JSON.parse(localStorage.getItem(`msgs_${currentUser.id}_${activeChat.id}`) || '[]');
-    setMessages(savedMsgs);
-  };
+    // Send heartbeat every 10 seconds
+    const heartbeatInterval = setInterval(() => {
+      queryNeon(`UPDATE users SET last_seen = NOW() WHERE id = $1`, [currentUser.id]);
+    }, 10000);
+
+    return () => clearInterval(heartbeatInterval);
+  }, [currentUser]);
+
+  // Periodic polling for message & peer active/last seen updates
+  useEffect(() => {
+    if (!currentUser.id || !activeChat) return;
+
+    const syncChatDetails = async () => {
+      // 1. Load local messages
+      const savedMsgs = JSON.parse(localStorage.getItem(`msgs_${currentUser.id}_${activeChat.id}`) || '[]');
+      setMessages(savedMsgs);
+
+      // 2. Fetch latest active_seen status of the active chat partner from Neon DB
+      const res = await queryNeon(`SELECT last_seen, avatar, bio FROM users WHERE id = $1 OR LOWER(username) = $2`, [activeChat.peerUserId || '', activeChat.username.toLowerCase()]);
+      if (res && res.rows && res.rows[0]) {
+        const peerData = res.rows[0];
+        setActiveChat((prev) => prev ? {
+          ...prev,
+          last_seen: peerData.last_seen,
+          avatar: peerData.avatar || prev.avatar,
+          bio: peerData.bio || prev.bio
+        } : null);
+      }
+    };
+
+    syncChatDetails();
+    const syncInterval = setInterval(syncChatDetails, 3000);
+
+    return () => clearInterval(syncInterval);
+  }, [currentUser, activeChat?.id]);
 
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -188,39 +235,32 @@ export default function App() {
         return;
       }
 
-      // 1. Check Neon DB first
+      // Check Neon DB
       const dbCheck = await queryNeon(`SELECT * FROM users WHERE LOWER(username) = $1`, [cleanUsername]);
       let existingUser = dbCheck && dbCheck.rows && dbCheck.rows[0];
-
-      // 2. Local memory fallback check
-      const localUsers = JSON.parse(localStorage.getItem('chatrio_db_users') || '[]');
-      if (!existingUser) {
-        existingUser = localUsers.find((u) => u.username.toLowerCase() === cleanUsername);
-      }
 
       if (existingUser) {
         showToast('Username already taken! Choose another.');
         return;
       }
 
+      const userId = 'usr_' + Date.now();
       const newUser = {
-        id: 'usr_' + Date.now(),
+        id: userId,
         username: authForm.username.trim(),
         email: cleanEmail,
         password: authForm.password,
         avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-        bio: 'Hey there! I am using Chatrio by Zaid 🚀'
+        bio: 'Hey there! I am using Chatrio by Zaid 🚀',
+        last_seen: new Date().toISOString()
       };
 
-      // Save to Neon DB
+      // Ensure last_seen column exists & insert new user
+      await queryNeon(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP DEFAULT NOW();`);
       await queryNeon(
-        `INSERT INTO users (username, email, password, avatar, bio) VALUES ($1, $2, $3, $4, $5)`,
-        [newUser.username, newUser.email, newUser.password, newUser.avatar, newUser.bio]
+        `INSERT INTO users (id, username, email, password, avatar, bio, last_seen) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+        [newUser.id, newUser.username, newUser.email, newUser.password, newUser.avatar, newUser.bio]
       );
-
-      // Save to shared localStorage so cross-browser tabs / windows on same machine can resolve instantly
-      localUsers.push(newUser);
-      localStorage.setItem('chatrio_db_users', JSON.stringify(localUsers));
 
       setCurrentUser(newUser);
       setProfileForm({ username: newUser.username, email: newUser.email, bio: newUser.bio });
@@ -232,13 +272,6 @@ export default function App() {
       // LOGIN
       const dbMatch = await queryNeon(`SELECT * FROM users WHERE LOWER(username) = $1 AND password = $2`, [cleanUsername, authForm.password]);
       let userMatch = dbMatch && dbMatch.rows && dbMatch.rows[0];
-
-      if (!userMatch) {
-        const localUsers = JSON.parse(localStorage.getItem('chatrio_db_users') || '[]');
-        userMatch = localUsers.find(
-          (u) => u.username.toLowerCase() === cleanUsername && u.password === authForm.password
-        );
-      }
 
       if (userMatch) {
         setCurrentUser(userMatch);
@@ -273,23 +306,12 @@ export default function App() {
 
     // Query Neon DB
     const dbRes = await queryNeon(
-      `SELECT id, username, email, avatar, bio FROM users WHERE LOWER(username) LIKE $1 AND id != $2`,
+      `SELECT id, username, email, avatar, bio, last_seen FROM users WHERE LOWER(username) LIKE $1 AND id != $2`,
       [`%${cleanQ}%`, currentUser.id]
     );
 
     let matches = dbRes && dbRes.rows ? dbRes.rows : [];
-
-    // Fallback search in shared directory
-    const localUsers = JSON.parse(localStorage.getItem('chatrio_db_users') || '[]');
-    const localMatches = localUsers.filter(
-      (u) => u.username.toLowerCase().includes(cleanQ) && u.id !== currentUser.id
-    );
-
-    // Merge unique users
-    const combined = [...matches, ...localMatches];
-    const unique = combined.filter((v, i, a) => a.findIndex(t => t.username.toLowerCase() === v.username.toLowerCase()) === i);
-
-    setSearchedUsers(unique);
+    setSearchedUsers(matches);
   };
 
   const startChatWithUser = (targetUser) => {
@@ -302,7 +324,7 @@ export default function App() {
         username: targetUser.username,
         avatar: targetUser.avatar,
         bio: targetUser.bio,
-        online: true
+        last_seen: targetUser.last_seen
       };
       setChats((prev) => [existingChat, ...prev]);
     }
@@ -333,7 +355,7 @@ export default function App() {
     const updated = [...messages, newMsg];
     setMessages(updated);
 
-    // Persist messages for both participants
+    // Persist messages locally
     localStorage.setItem(`msgs_${currentUser.id}_${activeChat.id}`, JSON.stringify(updated));
     localStorage.setItem(`msgs_${activeChat.id}_${currentUser.id}`, JSON.stringify(updated));
 
@@ -381,7 +403,7 @@ export default function App() {
     localStorage.setItem('chatrio_user', JSON.stringify(updated));
 
     // Update in Neon DB
-    queryNeon(`UPDATE users SET avatar = $1 WHERE username = $2`, [avatarUrl, currentUser.username]);
+    queryNeon(`UPDATE users SET avatar = $1 WHERE id = $2`, [avatarUrl, currentUser.id]);
 
     showToast('Profile photo updated!');
   };
@@ -460,9 +482,10 @@ export default function App() {
       mediaStreamRef.current = null;
     }
     setCurrentCall(null);
-    setIsMuted(false);
     showToast('Call ended');
   };
+
+  const isPeerActiveNow = activeChat && activeChat.last_seen && ((new Date() - new Date(activeChat.last_seen)) / 1000) < 20;
 
   if (!isLoggedIn) {
     return (
@@ -476,7 +499,7 @@ export default function App() {
               Chatrio <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-500/30">by Zaid</span>
             </h2>
             <p className="text-xs text-slate-400 mt-2">
-              {authMode === 'register' ? 'Create account with Neon DB sync' : 'Login to your Chatrio account'}
+              {authMode === 'register' ? 'Create your Chatrio account' : 'Login to your Chatrio account'}
             </p>
           </div>
 
@@ -633,7 +656,7 @@ export default function App() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => handleSearchUsers(e.target.value)}
-                placeholder="Search registered @username in Neon DB..."
+                placeholder="Search @username..."
                 className="w-full bg-slate-800/50 border border-slate-700/60 rounded-xl py-2.5 pl-10 pr-4 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
@@ -642,25 +665,31 @@ export default function App() {
             {isSearching && (
               <div className="absolute top-full left-0 right-0 bg-slate-900 border border-slate-800 rounded-b-2xl shadow-2xl z-30 p-2 max-h-60 overflow-y-auto">
                 <p className="text-[10px] text-slate-400 uppercase tracking-wider px-2 py-1 font-semibold">
-                  Neon DB Users
+                  Users Found
                 </p>
                 {searchedUsers.length === 0 ? (
                   <p className="text-xs text-slate-500 p-3 text-center">No registered user found with @{searchQuery}</p>
                 ) : (
-                  searchedUsers.map((u) => (
-                    <div
-                      key={u.id}
-                      onClick={() => startChatWithUser(u)}
-                      className="flex items-center space-x-3 p-2.5 hover:bg-slate-800 rounded-xl cursor-pointer transition-colors"
-                    >
-                      <img src={u.avatar} className="w-9 h-9 rounded-full object-cover" alt="" />
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-semibold text-xs text-white">@{u.username}</h4>
-                        <p className="text-[11px] text-slate-400 truncate">{u.bio}</p>
+                  searchedUsers.map((u) => {
+                    const isUserOnline = u.last_seen && ((new Date() - new Date(u.last_seen)) / 1000) < 20;
+                    return (
+                      <div
+                        key={u.id}
+                        onClick={() => startChatWithUser(u)}
+                        className="flex items-center space-x-3 p-2.5 hover:bg-slate-800 rounded-xl cursor-pointer transition-colors"
+                      >
+                        <div className="relative">
+                          <img src={u.avatar} className="w-9 h-9 rounded-full object-cover" alt="" />
+                          <span className={`w-2.5 h-2.5 rounded-full absolute bottom-0 right-0 border-2 border-slate-900 ${isUserOnline ? 'bg-emerald-500' : 'bg-slate-500'}`}></span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-semibold text-xs text-white">@{u.username}</h4>
+                          <p className="text-[10px] text-emerald-400">{formatLastSeen(u.last_seen)}</p>
+                        </div>
+                        <Plus className="w-4 h-4 text-emerald-400" />
                       </div>
-                      <Plus className="w-4 h-4 text-emerald-400" />
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             )}
@@ -673,7 +702,7 @@ export default function App() {
                 {chats.length === 0 ? (
                   <div className="p-8 text-center text-xs text-slate-500">
                     <p className="font-semibold text-slate-400">No active conversations</p>
-                    <p className="mt-1 text-[11px]">Type an exact registered @username in the search bar above to start messaging across devices!</p>
+                    <p className="mt-1 text-[11px]">Type a registered @username in the search bar above to start messaging!</p>
                   </div>
                 ) : (
                   chats.map((chat) => (
@@ -685,7 +714,10 @@ export default function App() {
                       }}
                       className="flex items-center space-x-3 p-3 rounded-2xl cursor-pointer hover:bg-slate-800/40 transition-colors"
                     >
-                      <img src={chat.avatar} className="w-12 h-12 rounded-full object-cover" alt="" />
+                      <div className="relative">
+                        <img src={chat.avatar} className="w-12 h-12 rounded-full object-cover" alt="" />
+                        <span className={`w-3 h-3 rounded-full absolute bottom-0 right-0 border-2 border-slate-900 ${chat.last_seen && ((new Date() - new Date(chat.last_seen)) / 1000) < 20 ? 'bg-emerald-500' : 'bg-slate-500'}`}></span>
+                      </div>
                       <div className="flex-1 min-w-0">
                         <h4 className="font-semibold text-sm">@{chat.username}</h4>
                         <p className="text-xs text-slate-400 truncate">{chat.bio}</p>
@@ -784,7 +816,7 @@ export default function App() {
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
               <MessageSquare className="w-12 h-12 text-emerald-400 mb-3" />
               <h2 className="text-xl font-bold">Chatrio by Zaid</h2>
-              <p className="text-xs text-slate-400 max-w-sm mt-1">Search an exact @username to start cross-device messaging synced with Neon DB!</p>
+              <p className="text-xs text-slate-400 max-w-sm mt-1">Search an exact @username to start cross-device messaging!</p>
             </div>
           ) : (
             <div className="flex-1 flex flex-col h-full overflow-hidden">
@@ -793,10 +825,15 @@ export default function App() {
                   <button onClick={() => setMobileChatOpen(false)} className="sm:hidden p-2 text-slate-400 hover:text-white">
                     <ArrowLeft className="w-5 h-5" />
                   </button>
-                  <img src={activeChat.avatar} className="w-10 h-10 rounded-full object-cover" alt="" />
+                  <div className="relative">
+                    <img src={activeChat.avatar} className="w-10 h-10 rounded-full object-cover" alt="" />
+                    <span className={`w-3 h-3 rounded-full absolute bottom-0 right-0 border-2 border-slate-900 ${isPeerActiveNow ? 'bg-emerald-500' : 'bg-slate-500'}`}></span>
+                  </div>
                   <div>
                     <h3 className="font-bold text-sm">@{activeChat.username}</h3>
-                    <p className="text-[11px] text-emerald-400">Neon DB Synced</p>
+                    <p className={`text-[11px] font-medium ${isPeerActiveNow ? 'text-emerald-400' : 'text-slate-400'}`}>
+                      {formatLastSeen(activeChat.last_seen)}
+                    </p>
                   </div>
                 </div>
 
