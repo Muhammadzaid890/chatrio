@@ -24,7 +24,12 @@ import {
   X,
   UploadCloud,
   CheckCircle2,
-  Database
+  Database,
+  ArrowLeft,
+  Image as ImageIcon,
+  MoreVertical,
+  Trash2,
+  Sparkles
 } from 'lucide-react';
 
 const CLOUDINARY_CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || 'hp0bmfy7';
@@ -55,6 +60,7 @@ export default function App() {
   // App Navigation Tabs & Active Chat State
   const [activeTab, setActiveTab] = useState('chats'); // 'chats' | 'status' | 'calls' | 'profile'
   const [activeChatId, setActiveChatId] = useState(null);
+  const [mobileChatOpen, setMobileChatOpen] = useState(false); // Mobile screen toggle
 
   // Username Search Query
   const [searchQuery, setSearchQuery] = useState('');
@@ -71,8 +77,6 @@ export default function App() {
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const mediaStreamRef = useRef(null);
-  const audioCtxRef = useRef(null);
-  const ringIntervalRef = useRef(null);
 
   // Inputs & Toast Notifications
   const [messageInput, setMessageInput] = useState('');
@@ -87,7 +91,7 @@ export default function App() {
     bio: ''
   });
 
-  // Completely FRESH empty states - No dummy data
+  // Fresh State - Synced with LocalStorage / DB
   const [registeredUsers, setRegisteredUsers] = useState([]);
   const [chats, setChats] = useState([]);
   const [statuses, setStatuses] = useState([]);
@@ -105,9 +109,14 @@ export default function App() {
     try {
       const savedUser = localStorage.getItem('chatrio_user');
       const savedDirectory = localStorage.getItem('chatrio_registered_users');
-      
+      const savedChats = localStorage.getItem('chatrio_saved_chats');
+
       if (savedDirectory) {
         setRegisteredUsers(JSON.parse(savedDirectory));
+      }
+
+      if (savedChats) {
+        setChats(JSON.parse(savedChats));
       }
 
       if (savedUser) {
@@ -125,11 +134,18 @@ export default function App() {
     }
   }, [theme]);
 
+  // Persist Chats to local storage when updated
+  useEffect(() => {
+    if (chats.length > 0) {
+      localStorage.setItem('chatrio_saved_chats', JSON.stringify(chats));
+    }
+  }, [chats]);
+
   const showToast = (msg) => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage('');
-    }, 3000);
+    }, 3200);
   };
 
   const uploadToCloudinary = async (file) => {
@@ -157,7 +173,6 @@ export default function App() {
     } catch (error) {
       console.error('Cloudinary Upload Error:', error);
       setIsUploading(false);
-      // Fallback local reader preview
       return new Promise((resolve) => {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result);
@@ -175,13 +190,12 @@ export default function App() {
         return;
       }
 
-      // Check if username already exists
       const existingUser = registeredUsers.find(
         (u) => u.username.toLowerCase() === authForm.username.toLowerCase()
       );
 
       if (existingUser) {
-        showToast('Username already taken. Please pick another one.');
+        showToast('Username already taken. Pick another one!');
         return;
       }
 
@@ -207,9 +221,8 @@ export default function App() {
 
       localStorage.setItem('chatrio_user', JSON.stringify(newUser));
       setIsLoggedIn(true);
-      showToast(`Welcome to Chatrio by Zaid, @${newUser.username}! 🎉`);
+      showToast(`Welcome to Chatrio, @${newUser.username}! 🎉`);
     } else {
-      // Login mode
       const userMatch = registeredUsers.find(
         (u) =>
           u.username.toLowerCase() === authForm.username.toLowerCase() &&
@@ -236,6 +249,7 @@ export default function App() {
     localStorage.removeItem('chatrio_user');
     setIsLoggedIn(false);
     setActiveChatId(null);
+    setMobileChatOpen(false);
     showToast('Logged out successfully');
   };
 
@@ -257,7 +271,6 @@ export default function App() {
   };
 
   const startChatWithUser = (targetUser) => {
-    // Check if chat already exists
     let existingChat = chats.find((c) => c.peerUserId === targetUser.id);
 
     if (!existingChat) {
@@ -275,6 +288,7 @@ export default function App() {
     }
 
     setActiveChatId(existingChat.id);
+    setMobileChatOpen(true);
     setSearchQuery('');
     setSearchedUsers([]);
     setIsSearching(false);
@@ -349,7 +363,6 @@ export default function App() {
     setCurrentUser(updated);
     localStorage.setItem('chatrio_user', JSON.stringify(updated));
 
-    // Also update in registered user directory
     setRegisteredUsers((prev) =>
       prev.map((u) => (u.id === currentUser.id ? { ...u, avatar: avatarUrl } : u))
     );
@@ -404,7 +417,6 @@ export default function App() {
       startTime: Date.now()
     });
 
-    // Add to Call Logs
     const newCallLog = {
       id: 'call_' + Date.now(),
       name: currentChat.name,
@@ -415,7 +427,6 @@ export default function App() {
     };
     setCallLogs((prev) => [newCallLog, ...prev]);
 
-    // Request camera feed for video
     if (callType === 'video') {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -444,16 +455,20 @@ export default function App() {
 
   if (!isLoggedIn) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[#070b14] text-white p-4 font-sans">
-        <div className="bg-[#0f172a] border border-slate-800 rounded-3xl w-full max-w-md p-6 sm:p-8 shadow-2xl relative overflow-hidden">
+      <div className="h-screen w-screen flex items-center justify-center bg-[#070b14] text-white p-4 font-sans relative overflow-hidden">
+        {/* Background glow accents */}
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-blue-600/10 rounded-full blur-3xl pointer-events-none"></div>
+
+        <div className="bg-[#0f172a]/90 backdrop-blur-xl border border-slate-800/80 rounded-3xl w-full max-w-md p-6 sm:p-8 shadow-2xl relative z-10 overflow-hidden">
           <div className="text-center mb-6">
-            <div className="w-16 h-16 bg-gradient-to-tr from-emerald-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-emerald-500/20">
+            <div className="w-16 h-16 bg-gradient-to-tr from-emerald-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-emerald-500/20 animate-bounce">
               <MessageSquare className="w-8 h-8 text-white" />
             </div>
-            <h2 className="text-2xl font-bold tracking-tight">
-              Chatrio <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30">by Zaid</span>
+            <h2 className="text-2xl font-extrabold tracking-tight">
+              Chatrio <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-500/30">by Zaid</span>
             </h2>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-slate-400 mt-2">
               {authMode === 'register'
                 ? 'Create a fresh account with your @username'
                 : 'Enter your credentials to log in'}
@@ -462,25 +477,23 @@ export default function App() {
 
           <form onSubmit={handleAuthSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                 Username (@)
               </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. zaidkhan"
-                  value={authForm.username}
-                  onChange={(e) =>
-                    setAuthForm({ ...authForm, username: e.target.value })
-                  }
-                  className="w-full bg-slate-800/80 border border-slate-700 rounded-xl py-2.5 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-all"
-                />
-              </div>
+              <input
+                type="text"
+                required
+                placeholder="e.g. zaidkhan"
+                value={authForm.username}
+                onChange={(e) =>
+                  setAuthForm({ ...authForm, username: e.target.value })
+                }
+                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-all"
+              />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                 Email Address
               </label>
               <input
@@ -491,12 +504,12 @@ export default function App() {
                 onChange={(e) =>
                   setAuthForm({ ...authForm, email: e.target.value })
                 }
-                className="w-full bg-slate-800/80 border border-slate-700 rounded-xl py-2.5 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-all"
+                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-all"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                 Password
               </label>
               <input
@@ -507,13 +520,13 @@ export default function App() {
                 onChange={(e) =>
                   setAuthForm({ ...authForm, password: e.target.value })
                 }
-                className="w-full bg-slate-800/80 border border-slate-700 rounded-xl py-2.5 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-all"
+                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-all"
               />
             </div>
 
             <button
               type="submit"
-              className="w-full py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white font-semibold rounded-xl shadow-lg shadow-emerald-500/25 transition-all flex items-center justify-center space-x-2"
+              className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white font-semibold rounded-xl shadow-lg shadow-emerald-500/25 transition-all active:scale-[0.99] flex items-center justify-center space-x-2"
             >
               <span>{authMode === 'register' ? 'Register Account' : 'Log In'}</span>
             </button>
@@ -526,7 +539,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setAuthMode('login')}
-                  className="text-emerald-400 font-semibold hover:underline"
+                  className="text-emerald-400 font-semibold hover:underline ml-1"
                 >
                   Log In
                 </button>
@@ -537,7 +550,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setAuthMode('register')}
-                  className="text-emerald-400 font-semibold hover:underline"
+                  className="text-emerald-400 font-semibold hover:underline ml-1"
                 >
                   Create One
                 </button>
@@ -556,9 +569,9 @@ export default function App() {
       
       {/* TOAST NOTIFICATION POPUP */}
       {toastMessage && (
-        <div className="fixed top-4 right-4 z-50 bg-slate-800 text-white px-4 py-2.5 rounded-xl shadow-2xl border border-slate-700 flex items-center gap-2 text-xs animate-bounce">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          <span>{toastMessage}</span>
+        <div className="fixed top-4 right-4 z-50 bg-slate-900/95 text-white px-4 py-3 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-center gap-2.5 text-xs animate-in fade-in slide-in-from-top-3">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+          <span className="font-medium">{toastMessage}</span>
         </div>
       )}
 
@@ -569,27 +582,30 @@ export default function App() {
             <MessageSquare className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="font-bold text-lg leading-tight">
+            <h1 className="font-extrabold text-lg leading-tight">
               Chatrio <span className="text-xs text-emerald-400 font-medium">by Zaid</span>
             </h1>
-            <p className="text-[11px] text-emerald-400 flex items-center gap-1">
+            <p className="text-[11px] text-emerald-400 flex items-center gap-1 font-medium">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> @{currentUser.username}
             </p>
           </div>
         </div>
 
         {/* HEADER CONTROLS */}
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2.5">
           <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="w-10 h-10 rounded-xl bg-slate-800/60 hover:bg-slate-700/60 flex items-center justify-center text-slate-300 transition-all"
+            className="w-10 h-10 rounded-xl bg-slate-800/60 hover:bg-slate-700/60 flex items-center justify-center text-slate-300 transition-all active:scale-95"
             title="Toggle Theme"
           >
             {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5 text-slate-700" />}
           </button>
 
           <div
-            onClick={() => setActiveTab('profile')}
+            onClick={() => {
+              setActiveTab('profile');
+              setMobileChatOpen(false);
+            }}
             className="flex items-center space-x-2 cursor-pointer bg-slate-800/40 p-1 pr-3 rounded-full hover:bg-slate-800/80 transition-all border border-slate-700/50"
           >
             <img src={currentUser.avatar} className="w-8 h-8 rounded-full object-cover" alt="Profile" />
@@ -600,7 +616,7 @@ export default function App() {
 
           <button
             onClick={handleLogout}
-            className="w-10 h-10 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 flex items-center justify-center transition-all border border-red-500/20"
+            className="w-10 h-10 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 flex items-center justify-center transition-all border border-red-500/20 active:scale-95"
             title="Log Out"
           >
             <LogOut className="w-4 h-4" />
@@ -611,32 +627,32 @@ export default function App() {
       {/* MAIN CONTAINER */}
       <div className="flex-1 flex overflow-hidden relative">
         
-        {/* LEFT SIDEBAR NAVIGATION & SEARCH */}
-        <aside className={`w-full sm:w-80 md:w-96 border-r flex flex-col z-10 transition-all duration-300 ${theme === 'dark' ? 'bg-[#0b101e]/80 border-slate-800/80' : 'bg-white border-slate-200'}`}>
+        {/* LEFT SIDEBAR - HIDDEN ON MOBILE WHEN CHAT IS OPEN */}
+        <aside className={`w-full sm:w-80 md:w-96 border-r flex flex-col z-10 transition-all duration-300 ${mobileChatOpen ? 'hidden sm:flex' : 'flex'} ${theme === 'dark' ? 'bg-[#0b101e]/80 border-slate-800/80' : 'bg-white border-slate-200'}`}>
           
           {/* NAVIGATION TABS */}
           <div className={`flex items-center border-b p-2 gap-1 ${theme === 'dark' ? 'border-slate-800/80 bg-[#070b15]' : 'border-slate-200 bg-slate-50'}`}>
             <button
               onClick={() => setActiveTab('chats')}
-              className={`flex-1 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'chats' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'chats' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}
             >
               <MessageSquare className="w-4 h-4" /> Chats
             </button>
             <button
               onClick={() => setActiveTab('status')}
-              className={`flex-1 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'status' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'status' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}
             >
               <Circle className="w-4 h-4" /> Status
             </button>
             <button
               onClick={() => setActiveTab('calls')}
-              className={`flex-1 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'calls' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'calls' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}
             >
               <Phone className="w-4 h-4" /> Calls
             </button>
             <button
               onClick={() => setActiveTab('profile')}
-              className={`flex-1 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'profile' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'profile' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:text-slate-200'}`}
             >
               <User className="w-4 h-4" /> Profile
             </button>
@@ -645,13 +661,13 @@ export default function App() {
           {/* USERNAME SEARCH BAR */}
           <div className="p-3 border-b border-slate-800/60 relative">
             <div className="relative">
-              <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-500" />
+              <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-500" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => handleSearchUsers(e.target.value)}
                 placeholder="Search registered @username..."
-                className="w-full bg-slate-800/50 border border-slate-700/60 rounded-xl py-2 pl-10 pr-4 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-all"
+                className="w-full bg-slate-800/50 border border-slate-700/60 rounded-xl py-2.5 pl-10 pr-4 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-all"
               />
             </div>
 
@@ -662,7 +678,7 @@ export default function App() {
                   Search Results
                 </p>
                 {searchedUsers.length === 0 ? (
-                  <p className="text-xs text-slate-500 p-2 text-center">No user found with @{searchQuery}</p>
+                  <p className="text-xs text-slate-500 p-3 text-center">No registered user found with @{searchQuery}</p>
                 ) : (
                   searchedUsers.map((u) => (
                     <div
@@ -690,9 +706,9 @@ export default function App() {
             {activeTab === 'chats' && (
               <div className="p-2 space-y-1">
                 {chats.length === 0 ? (
-                  <div className="p-6 text-center text-xs text-slate-500">
-                    <p>No active chats yet.</p>
-                    <p className="mt-1 text-[11px]">Use the top search bar to find registered users by @username!</p>
+                  <div className="p-8 text-center text-xs text-slate-500 leading-relaxed">
+                    <p className="font-semibold text-slate-400">No active chats yet</p>
+                    <p className="mt-1 text-[11px]">Use the search bar above to find registered users by @username!</p>
                   </div>
                 ) : (
                   chats.map((chat) => {
@@ -702,14 +718,17 @@ export default function App() {
                     return (
                       <div
                         key={chat.id}
-                        onClick={() => setActiveChatId(chat.id)}
+                        onClick={() => {
+                          setActiveChatId(chat.id);
+                          setMobileChatOpen(true);
+                        }}
                         className={`flex items-center space-x-3 p-3 rounded-2xl cursor-pointer transition-all border border-transparent ${
                           isActive ? 'bg-slate-800/80 border-slate-700/60' : 'hover:bg-slate-800/40'
                         }`}
                       >
                         <div className="relative flex-shrink-0">
                           <img src={chat.avatar} className="w-12 h-12 rounded-full object-cover" alt="" />
-                          <span className="w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-900 absolute bottom-0 right-0"></span>
+                          <span className="w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-slate-900 absolute bottom-0 right-0"></span>
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
@@ -745,7 +764,7 @@ export default function App() {
                 <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-2 pt-2">Recent Updates</div>
                 <div className="space-y-2">
                   {statuses.length === 0 ? (
-                    <p className="text-xs text-slate-500 p-3 text-center">No status updates yet.</p>
+                    <p className="text-xs text-slate-500 p-4 text-center">No status updates yet.</p>
                   ) : (
                     statuses.map((st) => (
                       <div
@@ -772,7 +791,7 @@ export default function App() {
               <div className="p-2 space-y-1">
                 <div className="p-3 text-xs text-slate-400 font-semibold uppercase tracking-wide">Recent Calls</div>
                 {callLogs.length === 0 ? (
-                  <p className="text-xs text-slate-500 p-4 text-center">No recent calls.</p>
+                  <p className="text-xs text-slate-500 p-4 text-center">No recent call history.</p>
                 ) : (
                   callLogs.map((call) => (
                     <div key={call.id} className="flex items-center space-x-3 p-3 rounded-2xl hover:bg-slate-800/40 transition-all">
@@ -840,7 +859,7 @@ export default function App() {
 
                   <button
                     onClick={handleSaveProfile}
-                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold text-xs transition-all shadow-lg shadow-emerald-600/30"
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold text-xs transition-all shadow-lg shadow-emerald-600/30 active:scale-[0.99]"
                   >
                     Save Profile Details
                   </button>
@@ -851,8 +870,8 @@ export default function App() {
           </div>
         </aside>
 
-        {/* RIGHT MAIN CHAT AREA */}
-        <main className={`flex-1 flex flex-col relative ${theme === 'dark' ? 'bg-[#070b15]/90' : 'bg-slate-100'}`}>
+        {/* RIGHT MAIN CHAT AREA - MOBILE RESPONSIVE TAPPING */}
+        <main className={`flex-1 flex flex-col relative ${!mobileChatOpen ? 'hidden sm:flex' : 'flex'} ${theme === 'dark' ? 'bg-[#070b15]/90' : 'bg-slate-100'}`}>
           {!activeChat ? (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
               <div className="w-20 h-20 bg-slate-800/60 rounded-full flex items-center justify-center mb-4 text-emerald-400 border border-slate-700/50 shadow-xl">
@@ -868,9 +887,17 @@ export default function App() {
           ) : (
             <div className="flex-1 flex flex-col h-full overflow-hidden">
               
-              {/* ACTIVE CHAT HEADER */}
+              {/* ACTIVE CHAT HEADER - WITH MOBILE BACK BUTTON */}
               <div className={`h-16 border-b px-4 flex items-center justify-between backdrop-blur-md ${theme === 'dark' ? 'border-slate-800/80 bg-[#0a0f1e]/90' : 'border-slate-200 bg-white'}`}>
                 <div className="flex items-center space-x-3">
+                  {/* MOBILE BACK ARROW */}
+                  <button
+                    onClick={() => setMobileChatOpen(false)}
+                    className="sm:hidden p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800/50 transition-colors"
+                  >
+                    <ArrowLeft className="w-5 h-5" />
+                  </button>
+
                   <img src={activeChat.avatar} className="w-10 h-10 rounded-full object-cover border border-slate-700" alt="" />
                   <div>
                     <h3 className="font-bold text-sm leading-tight">@{activeChat.name}</h3>
@@ -904,9 +931,9 @@ export default function App() {
 
                     return (
                       <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[75%] p-3 rounded-2xl shadow-md ${isMe ? 'bg-emerald-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-100 rounded-tl-none border border-slate-700/50'}`}>
+                        <div className={`max-w-[80%] sm:max-w-[70%] p-3 rounded-2xl shadow-md ${isMe ? 'bg-emerald-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-100 rounded-tl-none border border-slate-700/50'}`}>
                           {msg.image && (
-                            <img src={msg.image} className="max-w-xs rounded-xl mb-2 object-cover" alt="" />
+                            <img src={msg.image} className="max-w-xs w-full rounded-xl mb-2 object-cover" alt="" />
                           )}
                           <p className="text-xs leading-relaxed">{msg.text}</p>
                           <span className="text-[9px] opacity-70 block text-right mt-1">{msg.time}</span>
@@ -948,19 +975,19 @@ export default function App() {
 
       {/* AUDIO / VIDEO CALL MODAL */}
       {currentCall && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md">
-          <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl p-6 flex flex-col items-center justify-between min-h-[480px] relative overflow-hidden shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4">
+          <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-6 flex flex-col items-center justify-between min-h-[460px] relative overflow-hidden shadow-2xl">
             
             {currentCall.type === 'video' && (
               <div className="absolute inset-0 w-full h-full bg-slate-950">
                 <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover"></video>
-                <div className="absolute bottom-20 right-6 w-32 h-44 bg-slate-800 rounded-2xl overflow-hidden border-2 border-emerald-500 shadow-2xl">
+                <div className="absolute bottom-20 right-6 w-28 h-40 bg-slate-800 rounded-2xl overflow-hidden border-2 border-emerald-500 shadow-2xl">
                   <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover"></video>
                 </div>
               </div>
             )}
 
-            <div className="z-10 text-center pt-8">
+            <div className="z-10 text-center pt-6">
               <img src={currentCall.peerAvatar} className="w-24 h-24 rounded-full object-cover border-4 border-slate-700 shadow-xl mx-auto mb-3" alt="" />
               <h3 className="text-2xl font-bold text-white">@{currentCall.peerName}</h3>
               <p className="text-xs uppercase tracking-widest text-emerald-400 font-semibold mt-1">
@@ -1003,7 +1030,7 @@ export default function App() {
                 onChange={(e) => setStatusTextInput(e.target.value)}
                 placeholder="What is on your mind?"
                 rows={3}
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-emerald-500"
               />
               <button
                 onClick={handlePublishStatus}
