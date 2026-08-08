@@ -35,12 +35,19 @@ export async function POST(request) {
     if (!dbUrl) {
       console.error('DATABASE_URL environment variable is missing');
       return NextResponse.json({ 
-        error: 'DATABASE_URL is missing in Vercel Environment Variables. Please add it in Vercel Settings and Redeploy.' 
+        error: 'DATABASE_URL is missing in Vercel Environment Variables.' 
       }, { status: 500 });
     }
 
     const sql = neon(dbUrl);
-    const rows = await sql(sqlQuery, params);
+    
+    // Fix for latest Neon driver syntax: use sql.query(...) for parameterized strings
+    let rows;
+    if (typeof sql.query === 'function') {
+      rows = await sql.query(sqlQuery, params);
+    } else {
+      rows = await sql(sqlQuery, params);
+    }
 
     return NextResponse.json({ rows: rows || [] });
   } catch (error) {
