@@ -25,19 +25,16 @@ const CLOUDINARY_CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || '
 const CLOUDINARY_UPLOAD_PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || 'ml_default';
 
 export default function App() {
-  // Theme state
   const [theme, setTheme] = useState('dark');
 
-  // Authentication State
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [authMode, setAuthMode] = useState('register'); // 'login' | 'register'
+  const [authMode, setAuthMode] = useState('register');
   const [authForm, setAuthForm] = useState({
     username: '',
     email: '',
     password: ''
   });
 
-  // Current Logged-in User Profile
   const [currentUser, setCurrentUser] = useState({
     id: null,
     username: '',
@@ -46,17 +43,14 @@ export default function App() {
     bio: 'Hey there! I am using Chatrio by Zaid 🚀'
   });
 
-  // App Navigation Tabs & Active Chat State
-  const [activeTab, setActiveTab] = useState('chats'); // 'chats' | 'status' | 'calls' | 'profile'
+  const [activeTab, setActiveTab] = useState('chats');
   const [activeChat, setActiveChat] = useState(null);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
 
-  // Username Search Query
   const [searchQuery, setSearchQuery] = useState('');
   const [searchedUsers, setSearchedUsers] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  // Modals & Calls
   const [showCreateStatusModal, setShowCreateStatusModal] = useState(false);
   const [activeStatusViewer, setActiveStatusViewer] = useState(null);
 
@@ -65,25 +59,21 @@ export default function App() {
   const remoteVideoRef = useRef(null);
   const mediaStreamRef = useRef(null);
 
-  // Inputs & Toast Notifications
   const [messageInput, setMessageInput] = useState('');
   const [statusTextInput, setStatusTextInput] = useState('');
   const [toastMessage, setToastMessage] = useState('');
 
-  // Profile Edit State
   const [profileForm, setProfileForm] = useState({
     username: '',
     email: '',
     bio: ''
   });
 
-  // Real-time State
   const [chats, setChats] = useState([]);
   const [messages, setMessages] = useState([]);
   const [statuses, setStatuses] = useState([]);
   const [callLogs, setCallLogs] = useState([]);
 
-  // Database helper: executes SQL against Neon DB API endpoint
   const queryNeon = async (sql, params = []) => {
     try {
       const res = await fetch('/api/db', {
@@ -92,16 +82,20 @@ export default function App() {
         body: JSON.stringify({ sql, params })
       });
       if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        const errMsg = errData.error || `Database Error (${res.status})`;
+        console.error('Neon DB query error:', res.status, errMsg);
+        showToast(`DB Error: ${errMsg}`);
         return null;
       }
       return await res.json();
     } catch (err) {
-      console.warn('Neon DB endpoint query error:', err);
+      console.warn('Neon DB endpoint fetch error:', err);
+      showToast('Network error connecting to database');
       return null;
     }
   };
 
-  // Helper to format "Last Seen" / "Active Now"
   const formatLastSeen = (lastSeenTime) => {
     if (!lastSeenTime) return 'Offline';
     const diffInSeconds = Math.floor((new Date() - new Date(lastSeenTime)) / 1000);
@@ -115,8 +109,14 @@ export default function App() {
     return `Last seen ${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   };
 
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage('');
+    }, 4500);
+  };
+
   useEffect(() => {
-    // Set Document Tab Title
     document.title = 'Chatrio by Zaid';
 
     if (theme === 'dark') {
@@ -125,7 +125,6 @@ export default function App() {
       document.documentElement.classList.remove('dark');
     }
 
-    // Load saved session
     try {
       const savedUser = localStorage.getItem('chatrio_user');
       if (savedUser) {
@@ -143,20 +142,16 @@ export default function App() {
     }
   }, [theme]);
 
-  // Heartbeat to update current user's last_seen in Neon DB & fetch active chat status
   useEffect(() => {
     if (!currentUser.id) return;
 
-    // 1. Initial Heartbeat + Table column check
     const updateHeartbeat = async () => {
-      // Ensure last_seen column exists in Neon DB
       await queryNeon(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP DEFAULT NOW();`);
       await queryNeon(`UPDATE users SET last_seen = NOW() WHERE id = $1`, [currentUser.id]);
     };
 
     updateHeartbeat();
 
-    // Send heartbeat every 10 seconds
     const heartbeatInterval = setInterval(() => {
       queryNeon(`UPDATE users SET last_seen = NOW() WHERE id = $1`, [currentUser.id]);
     }, 10000);
@@ -164,16 +159,13 @@ export default function App() {
     return () => clearInterval(heartbeatInterval);
   }, [currentUser]);
 
-  // Periodic polling for message & peer active/last seen updates
   useEffect(() => {
     if (!currentUser.id || !activeChat) return;
 
     const syncChatDetails = async () => {
-      // 1. Load local messages
       const savedMsgs = JSON.parse(localStorage.getItem(`msgs_${currentUser.id}_${activeChat.id}`) || '[]');
       setMessages(savedMsgs);
 
-      // 2. Fetch latest active_seen status of the active chat partner from Neon DB
       const res = await queryNeon(`SELECT last_seen, avatar, bio FROM users WHERE id = $1 OR LOWER(username) = $2`, [activeChat.peerUserId || '', activeChat.username.toLowerCase()]);
       if (res && res.rows && res.rows[0]) {
         const peerData = res.rows[0];
@@ -191,13 +183,6 @@ export default function App() {
 
     return () => clearInterval(syncInterval);
   }, [currentUser, activeChat?.id]);
-
-  const showToast = (msg) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage('');
-    }, 3200);
-  };
 
   const uploadToCloudinary = async (file) => {
     try {
@@ -235,8 +220,10 @@ export default function App() {
         return;
       }
 
-      // Check Neon DB
+      showToast('Creating account...');
       const dbCheck = await queryNeon(`SELECT * FROM users WHERE LOWER(username) = $1`, [cleanUsername]);
+      if (!dbCheck) return; // Error toast will be displayed by queryNeon
+
       let existingUser = dbCheck && dbCheck.rows && dbCheck.rows[0];
 
       if (existingUser) {
@@ -255,12 +242,13 @@ export default function App() {
         last_seen: new Date().toISOString()
       };
 
-      // Ensure last_seen column exists & insert new user
       await queryNeon(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP DEFAULT NOW();`);
-      await queryNeon(
+      const insertRes = await queryNeon(
         `INSERT INTO users (id, username, email, password, avatar, bio, last_seen) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
         [newUser.id, newUser.username, newUser.email, newUser.password, newUser.avatar, newUser.bio]
       );
+
+      if (!insertRes) return;
 
       setCurrentUser(newUser);
       setProfileForm({ username: newUser.username, email: newUser.email, bio: newUser.bio });
@@ -269,8 +257,10 @@ export default function App() {
       showToast(`Welcome to Chatrio, @${newUser.username}! 🎉`);
 
     } else {
-      // LOGIN
+      showToast('Logging in...');
       const dbMatch = await queryNeon(`SELECT * FROM users WHERE LOWER(username) = $1 AND password = $2`, [cleanUsername, authForm.password]);
+      if (!dbMatch) return;
+
       let userMatch = dbMatch && dbMatch.rows && dbMatch.rows[0];
 
       if (userMatch) {
@@ -304,7 +294,6 @@ export default function App() {
     setIsSearching(true);
     const cleanQ = query.trim().toLowerCase();
 
-    // Query Neon DB
     const dbRes = await queryNeon(
       `SELECT id, username, email, avatar, bio, last_seen FROM users WHERE LOWER(username) LIKE $1 AND id != $2`,
       [`%${cleanQ}%`, currentUser.id]
@@ -336,7 +325,6 @@ export default function App() {
     setIsSearching(false);
     setActiveTab('chats');
 
-    // Load messages for this conversation
     const savedMsgs = JSON.parse(localStorage.getItem(`msgs_${currentUser.id}_${existingChat.id}`) || '[]');
     setMessages(savedMsgs);
   };
@@ -355,11 +343,9 @@ export default function App() {
     const updated = [...messages, newMsg];
     setMessages(updated);
 
-    // Persist messages locally
     localStorage.setItem(`msgs_${currentUser.id}_${activeChat.id}`, JSON.stringify(updated));
     localStorage.setItem(`msgs_${activeChat.id}_${currentUser.id}`, JSON.stringify(updated));
 
-    // Save to Neon DB messages table
     queryNeon(
       `INSERT INTO messages (sender_id, receiver_id, text) VALUES ($1, $2, $3)`,
       [currentUser.id, activeChat.id, messageInput.trim()]
@@ -402,7 +388,6 @@ export default function App() {
     setCurrentUser(updated);
     localStorage.setItem('chatrio_user', JSON.stringify(updated));
 
-    // Update in Neon DB
     queryNeon(`UPDATE users SET avatar = $1 WHERE id = $2`, [avatarUrl, currentUser.id]);
 
     showToast('Profile photo updated!');
@@ -419,7 +404,6 @@ export default function App() {
     setCurrentUser(updated);
     localStorage.setItem('chatrio_user', JSON.stringify(updated));
 
-    // Update in Neon DB
     queryNeon(
       `UPDATE users SET username = $1, email = $2, bio = $3 WHERE id = $4`,
       [profileForm.username, profileForm.email, profileForm.bio, currentUser.id]
@@ -490,6 +474,12 @@ export default function App() {
   if (!isLoggedIn) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-[#070b14] text-white p-4 font-sans relative overflow-hidden">
+        {toastMessage && (
+          <div className="fixed top-4 right-4 z-50 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-2xl border border-red-500/40 flex items-center gap-2 text-xs animate-bounce">
+            <span className="font-semibold">{toastMessage}</span>
+          </div>
+        )}
+
         <div className="bg-[#0f172a]/90 backdrop-blur-xl border border-slate-800/80 rounded-3xl w-full max-w-md p-6 sm:p-8 shadow-2xl relative z-10">
           <div className="text-center mb-6">
             <div className="w-16 h-16 bg-gradient-to-tr from-emerald-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-emerald-500/20">
@@ -579,9 +569,8 @@ export default function App() {
   return (
     <div className={`h-screen w-screen overflow-hidden flex flex-col font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-[#070b14] text-slate-100' : 'bg-slate-100 text-slate-800'}`}>
       
-      {/* TOAST POPUP */}
       {toastMessage && (
-        <div className="fixed top-4 right-4 z-50 bg-slate-900/95 text-white px-4 py-3 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-center gap-2.5 text-xs animate-bounce">
+        <div className="fixed top-4 right-4 z-50 bg-slate-900/95 text-white px-4 py-3 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-center gap-2.5 text-xs animate-bounce max-w-sm">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
           <span className="font-medium">{toastMessage}</span>
         </div>
@@ -630,7 +619,7 @@ export default function App() {
       {/* MAIN CONTAINER */}
       <div className="flex-1 flex overflow-hidden relative">
         
-        {/* SIDEBAR - HIDDEN ON MOBILE WHEN CHAT IS ACTIVE */}
+        {/* SIDEBAR */}
         <aside className={`w-full sm:w-80 md:w-96 border-r flex flex-col z-10 ${mobileChatOpen ? 'hidden sm:flex' : 'flex'} ${theme === 'dark' ? 'bg-[#0b101e]/80 border-slate-800/80' : 'bg-white border-slate-200'}`}>
           
           <div className={`flex items-center border-b p-2 gap-1 ${theme === 'dark' ? 'border-slate-800/80 bg-[#070b15]' : 'border-slate-200 bg-slate-50'}`}>
