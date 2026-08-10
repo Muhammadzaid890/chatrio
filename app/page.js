@@ -84,6 +84,10 @@ export default function App() {
   const audioChunksRef = useRef([]);
   const timerIntervalRef = useRef(null);
 
+  // Mobile PWA Install Prompt State
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [showInstallPrompt, setShowInstallPrompt] = useState(false);
+
   // Input & Messaging States
   const [messageInput, setMessageInput] = useState('');
   const [statusTextInput, setStatusTextInput] = useState('');
@@ -172,6 +176,15 @@ export default function App() {
       document.documentElement.classList.remove('dark');
     }
 
+    // Capture PWA Mobile Install Event
+    const handleBeforeInstall = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallPrompt(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+
     try {
       const savedUser = localStorage.getItem('chatrio_user');
       if (savedUser) {
@@ -187,7 +200,24 @@ export default function App() {
     } catch (err) {
       console.error('Session load error:', err);
     }
+
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
   }, [theme]);
+
+  // Handle PWA Install Action
+  const handleInstallClick = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        showToast('Chatrio App Installed on Home Screen! 🎉');
+      }
+      setDeferredPrompt(null);
+      setShowInstallPrompt(false);
+    } else {
+      showToast('Tap Chrome Menu (3 dots) -> "Install App" or "Add to Home screen"');
+    }
+  };
 
   // Heartbeat Online Sync
   useEffect(() => {
@@ -958,6 +988,14 @@ export default function App() {
 
         <div className="flex items-center space-x-2.5">
           <button
+            onClick={handleInstallClick}
+            className="px-3 py-1.5 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white border border-emerald-500/40 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all"
+            title="Download App"
+          >
+            <span className="text-sm">📱</span> Download App
+          </button>
+
+          <button
             onClick={() => setShowRequestsModal(true)}
             className="relative w-10 h-10 rounded-xl bg-slate-800/60 flex items-center justify-center text-slate-300 hover:bg-slate-700/60 transition-all"
             title="Friend Requests"
@@ -1404,7 +1442,7 @@ export default function App() {
                     className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl py-2.5 px-4 text-base sm:text-xs text-white focus:outline-none focus:border-emerald-500"
                   />
                   <button onClick={handleSendMessage} className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-lg shadow-emerald-600/30 hover:bg-emerald-500 transition-colors">
-                    Send <Send className="w-4 h-4" />
+                    <Send className="w-4 h-4" />
                   </button>
                 </div>
               )}
@@ -1467,7 +1505,7 @@ export default function App() {
         </div>
       )}
 
-      {/* MESSAGE CONTEXT MENU POPUP */}
+      {}
       {contextMenuMsg && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-xs p-4 space-y-3 shadow-2xl">
@@ -1654,6 +1692,35 @@ export default function App() {
 
           <div className="my-auto text-center px-4">
             <p className="text-2xl font-bold text-white leading-relaxed">{activeStatusViewer.text}</p>
+          </div>
+        </div>
+      )}
+
+      {/* MOBILE POPUP: DOWNLOAD / INSTALL APP BANNER */}
+      {showInstallPrompt && (
+        <div className="fixed bottom-4 left-4 right-4 z-50 bg-slate-900/95 border-2 border-emerald-500 rounded-2xl p-4 shadow-2xl backdrop-blur-lg flex items-center justify-between gap-3 animate-bounce">
+          <div className="flex items-center space-x-3 min-w-0">
+            <div className="w-11 h-11 bg-emerald-500/20 text-emerald-400 rounded-xl flex items-center justify-center flex-shrink-0 font-bold text-xl border border-emerald-500/30">
+              📱
+            </div>
+            <div className="min-w-0">
+              <h4 className="font-extrabold text-xs sm:text-sm text-white truncate">Install Chatrio App</h4>
+              <p className="text-[10px] text-emerald-400 font-medium truncate">Get app on your mobile screen!</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={handleInstallClick}
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-600/30 transition-all"
+            >
+              Install Now
+            </button>
+            <button
+              onClick={() => setShowInstallPrompt(false)}
+              className="p-1.5 text-slate-400 hover:text-white"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}
