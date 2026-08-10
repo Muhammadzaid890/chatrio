@@ -1,3 +1,5 @@
+import React from 'react';
+
 export const metadata = {
   title: 'Chatrio by Zaid',
   description: 'Real-time Messaging and Calling Web App',
