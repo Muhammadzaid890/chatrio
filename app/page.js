@@ -40,6 +40,21 @@ import {
 const CLOUDINARY_CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || 'hp0bmfy7';
 const CLOUDINARY_UPLOAD_PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || 'ml_default';
 
+// Inline Fallback Logo Component (Renders ED branding cleanly even if logo.png is missing)
+const EDLogo = ({ className = 'w-10 h-10' }) => (
+  <div className={`${className} bg-black border border-amber-500/40 rounded-xl flex items-center justify-center font-extrabold text-amber-400 shadow-md flex-shrink-0 select-none overflow-hidden relative group`}>
+    <img
+      src="/logo.png"
+      alt="ED"
+      className="w-full h-full object-cover absolute inset-0"
+      onError={(e) => {
+        e.target.style.display = 'none';
+      }}
+    />
+    <span className="text-amber-400 font-extrabold text-sm tracking-tighter">ED</span>
+  </div>
+);
+
 export default function App() {
   const [theme, setTheme] = useState('dark');
 
@@ -136,29 +151,40 @@ export default function App() {
 
   const formatTimeAgo = (dateStr) => {
     if (!dateStr) return '';
-    const date = new Date(dateStr);
-    const diffInSeconds = Math.floor((new Date() - date) / 1000);
+    try {
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return '';
+      const diffInSeconds = Math.floor((new Date() - date) / 1000);
 
-    if (diffInSeconds < 15) return 'just now';
-    if (diffInSeconds < 60) return `${diffInSeconds}s ago`;
-    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
-    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
-    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
+      if (diffInSeconds < 15) return 'just now';
+      if (diffInSeconds < 60) return `${diffInSeconds}s ago`;
+      if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+      if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
+      if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
 
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    } catch (e) {
+      return '';
+    }
   };
 
   const formatLastSeen = (lastSeenTime) => {
     if (!lastSeenTime) return 'Offline';
-    const diffInSeconds = Math.floor((new Date() - new Date(lastSeenTime)) / 1000);
+    try {
+      const date = new Date(lastSeenTime);
+      if (isNaN(date.getTime())) return 'Offline';
 
-    if (diffInSeconds < 20) return 'Active Now';
-    if (diffInSeconds < 60) return 'Last seen just now';
-    if (diffInSeconds < 3600) return `Last seen ${Math.floor(diffInSeconds / 60)}m ago`;
-    if (diffInSeconds < 86400) return `Last seen ${Math.floor(diffInSeconds / 3600)}h ago`;
+      const diffInSeconds = Math.floor((new Date() - date) / 1000);
 
-    const d = new Date(lastSeenTime);
-    return `Last seen ${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      if (diffInSeconds < 20) return 'Active Now';
+      if (diffInSeconds < 60) return 'Last seen just now';
+      if (diffInSeconds < 3600) return `Last seen ${Math.floor(diffInSeconds / 60)}m ago`;
+      if (diffInSeconds < 86400) return `Last seen ${Math.floor(diffInSeconds / 3600)}h ago`;
+
+      return `Last seen ${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } catch (e) {
+      return 'Offline';
+    }
   };
 
   const showToast = (msg) => {
@@ -883,17 +909,8 @@ export default function App() {
 
         <div className="bg-[#0f172a]/90 backdrop-blur-xl border border-slate-800/80 rounded-3xl w-full max-w-md p-6 sm:p-8 shadow-2xl relative z-10">
           <div className="text-center mb-6">
-            <div className="w-16 h-16 bg-black rounded-2xl flex items-center justify-center mx-auto mb-3 border border-amber-500/30 shadow-lg shadow-amber-500/10 overflow-hidden">
-              <img
-                src="/logo.png"
-                alt="Chatrio by ED"
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  e.target.onerror = null;
-                  e.target.style.display = 'none';
-                  e.target.parentNode.innerHTML = '<span class="text-amber-400 font-extrabold text-xl">ED</span>';
-                }}
-              />
+            <div className="mx-auto mb-3 flex justify-center">
+              <EDLogo className="w-16 h-16 rounded-2xl border-amber-500/30 text-xl" />
             </div>
             <h2 className="text-2xl font-extrabold tracking-tight text-white">
               Chatrio <span className="text-xs bg-amber-500/20 text-amber-400 px-2.5 py-1 rounded-full border border-amber-500/30">by ED</span>
@@ -989,18 +1006,7 @@ export default function App() {
       {/* HEADER */}
       <header className={`h-16 border-b px-4 flex items-center justify-between backdrop-blur-md z-20 flex-shrink-0 ${theme === 'dark' ? 'border-slate-800/80 bg-[#0a0f1d]/90' : 'border-slate-200 bg-white/90'}`}>
         <div className="flex items-center space-x-3 min-w-0">
-          <div className="w-10 h-10 bg-black rounded-xl border border-amber-500/30 overflow-hidden flex items-center justify-center flex-shrink-0 shadow-md">
-            <img
-              src="/logo.png"
-              alt="ED Logo"
-              className="w-full h-full object-cover"
-              onError={(e) => {
-                e.target.onerror = null;
-                e.target.style.display = 'none';
-                e.target.parentNode.innerHTML = '<span class="text-amber-400 font-extrabold text-sm">ED</span>';
-              }}
-            />
-          </div>
+          <EDLogo className="w-10 h-10" />
           <div className="min-w-0">
             <h1 className="font-extrabold text-base sm:text-lg leading-tight truncate">
               Chatrio <span className="text-xs text-amber-400 font-medium">by ED</span>
@@ -1056,7 +1062,7 @@ export default function App() {
         </div>
       </header>
 
-      {}
+      {/* MAIN CONTENT AREA */}
       <div className="flex-1 flex overflow-hidden min-h-0 relative w-full max-w-full">
         
         {/* SIDEBAR */}
@@ -1158,7 +1164,7 @@ export default function App() {
             )}
           </div>
 
-          {}
+          {/* SIDEBAR TABS CONTENT */}
           <div className="flex-1 overflow-y-auto relative min-h-0">
             {activeTab === 'chats' && (
               <div className="p-2 space-y-1">
@@ -1278,22 +1284,11 @@ export default function App() {
           </div>
         </aside>
 
-        {}
+        {/* MAIN CHAT DISPLAY */}
         <main className={`flex-1 flex flex-col relative h-full min-h-0 w-full max-w-full ${!mobileChatOpen ? 'hidden sm:flex' : 'flex'} ${theme === 'dark' ? 'bg-[#070b15]/90' : 'bg-slate-100'}`}>
           {!activeChat ? (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-              <div className="w-16 h-16 bg-black rounded-2xl flex items-center justify-center mb-3 border border-amber-500/30 shadow-xl overflow-hidden">
-                <img
-                  src="/logo.png"
-                  alt="ED Logo"
-                  className="w-full h-full object-cover"
-                  onError={(e) => {
-                    e.target.onerror = null;
-                    e.target.style.display = 'none';
-                    e.target.parentNode.innerHTML = '<span class="text-amber-400 font-extrabold text-xl">ED</span>';
-                  }}
-                />
-              </div>
+              <EDLogo className="w-16 h-16 mb-3 border-amber-500/40 text-2xl" />
               <h2 className="text-xl font-bold">Chatrio by ED</h2>
               <p className="text-xs text-slate-400 max-w-sm mt-1">Search an exact @username to send a chat request and start cross-device messaging!</p>
             </div>
@@ -1426,7 +1421,6 @@ export default function App() {
                 <div ref={chatMessagesEndRef} />
               </div>
 
-              {}
               {/* REPLY PREVIEW BOX */}
               {replyingTo && (
                 <div className="bg-slate-800/90 border-t border-slate-700 p-2.5 flex items-center justify-between text-xs text-white flex-shrink-0">
@@ -1737,18 +1731,7 @@ export default function App() {
       {showInstallPrompt && (
         <div className="fixed bottom-4 left-4 right-4 z-50 bg-slate-900/95 border-2 border-amber-500 rounded-2xl p-4 shadow-2xl backdrop-blur-lg flex items-center justify-between gap-3 animate-bounce">
           <div className="flex items-center space-x-3 min-w-0">
-            <div className="w-11 h-11 bg-black text-amber-400 rounded-xl flex items-center justify-center flex-shrink-0 font-bold border border-amber-500/30 overflow-hidden">
-              <img
-                src="/logo.png"
-                alt="ED Logo"
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  e.target.onerror = null;
-                  e.target.style.display = 'none';
-                  e.target.parentNode.innerText = 'ED';
-                }}
-              />
-            </div>
+            <EDLogo className="w-11 h-11 text-base" />
             <div className="min-w-0">
               <h4 className="font-extrabold text-xs sm:text-sm text-white truncate">Install Chatrio App</h4>
               <p className="text-[10px] text-amber-400 font-medium truncate">Get app on your mobile screen!</p>
