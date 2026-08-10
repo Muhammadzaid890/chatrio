@@ -28,8 +28,9 @@ import {
   Reply,
   Trash2,
   CornerDownRight,
-  Smile,
-  Share2
+  Share2,
+  PhoneIncoming,
+  PhoneCall
 } from 'lucide-react';
 
 const CLOUDINARY_CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || 'hp0bmfy7';
@@ -69,7 +70,9 @@ export default function App() {
   const [activeStatusViewer, setActiveStatusViewer] = useState(null);
 
   const [currentCall, setCurrentCall] = useState(null);
+  const [incomingCallAlert, setIncomingCallAlert] = useState(null);
   const mediaStreamRef = useRef(null);
+  const chatMessagesEndRef = useRef(null);
 
   const [messageInput, setMessageInput] = useState('');
   const [statusTextInput, setStatusTextInput] = useState('');
@@ -77,7 +80,6 @@ export default function App() {
 
   const [replyingTo, setReplyingTo] = useState(null);
   const [contextMenuMsg, setContextMenuMsg] = useState(null);
-  const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
   const [forwardModalMsg, setForwardModalMsg] = useState(null);
 
   const [profileForm, setProfileForm] = useState({
@@ -189,6 +191,31 @@ export default function App() {
     return () => clearInterval(heartbeatInterval);
   }, [currentUser.id]);
 
+  useEffect(() => {
+    if (!currentUser.id) return;
+
+    const pollIncomingCalls = async () => {
+      const res = await queryNeon(
+        `SELECT c.id as call_id, c.caller_id, c.call_type, c.status, u.username as caller_name, u.avatar as caller_avatar
+         FROM calls c
+         JOIN users u ON c.caller_id = u.id
+         WHERE c.receiver_id = $1 AND c.status = 'ringing'
+         ORDER BY c.id DESC LIMIT 1`,
+        [currentUser.id]
+      );
+
+      if (res && res.rows && res.rows.length > 0) {
+        setIncomingCallAlert(res.rows[0]);
+      } else {
+        setIncomingCallAlert(null);
+      }
+    };
+
+    pollIncomingCalls();
+    const callInterval = setInterval(pollIncomingCalls, 2500);
+    return () => clearInterval(callInterval);
+  }, [currentUser.id]);
+
   const loadAcceptedChatsAndRequests = async () => {
     if (!currentUser.id) return;
 
@@ -294,6 +321,10 @@ export default function App() {
 
     return () => clearInterval(syncInterval);
   }, [currentUser.id, activeChat?.id]);
+
+  useEffect(() => {
+    chatMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const uploadToCloudinary = async (file) => {
     try {
@@ -637,7 +668,15 @@ export default function App() {
   const startCall = async (callType) => {
     if (!activeChat) return;
 
+    showToast(`Ringing @${activeChat.username}...`);
+
+    const res = await queryNeon(
+      `INSERT INTO calls (caller_id, receiver_id, call_type, status) VALUES ($1, $2, $3, 'ringing') RETURNING *`,
+      [currentUser.id, activeChat.id, callType]
+    );
+
     setCurrentCall({
+      id: res && res.rows && res.rows[0] ? res.rows[0].id : Date.now(),
       type: callType,
       peerName: activeChat.username,
       peerAvatar: activeChat.avatar
@@ -653,10 +692,32 @@ export default function App() {
     setCallLogs((prev) => [newCallLog, ...prev]);
   };
 
-  const endCall = () => {
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-      mediaStreamRef.current = null;
+  const handleAcceptIncomingCall = async () => {
+    if (!incomingCallAlert) return;
+
+    await queryNeon(`UPDATE calls SET status = 'accepted' WHERE id = $1`, [incomingCallAlert.call_id]);
+
+    setCurrentCall({
+      id: incomingCallAlert.call_id,
+      type: incomingCallAlert.call_type,
+      peerName: incomingCallAlert.caller_name,
+      peerAvatar: incomingCallAlert.caller_avatar
+    });
+
+    setIncomingCallAlert(null);
+  };
+
+  const handleDeclineIncomingCall = async () => {
+    if (!incomingCallAlert) return;
+
+    await queryNeon(`UPDATE calls SET status = 'declined' WHERE id = $1`, [incomingCallAlert.call_id]);
+    setIncomingCallAlert(null);
+    showToast('Call declined');
+  };
+
+  const endCall = async () => {
+    if (currentCall && currentCall.id) {
+      await queryNeon(`UPDATE calls SET status = 'ended' WHERE id = $1`, [currentCall.id]);
     }
     setCurrentCall(null);
     showToast('Call ended');
@@ -666,7 +727,7 @@ export default function App() {
 
   if (!isLoggedIn) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[#070b14] text-white p-4 font-sans relative overflow-hidden">
+      <div className="h-[100dvh] w-screen fixed inset-0 flex items-center justify-center bg-[#070b14] text-white p-4 font-sans overflow-hidden">
         {toastMessage && (
           <div className="fixed top-4 right-4 z-50 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-2xl border border-red-500/40 flex items-center gap-2 text-xs animate-bounce">
             <span className="font-semibold">{toastMessage}</span>
@@ -697,7 +758,7 @@ export default function App() {
                 placeholder="e.g. zaidkhan"
                 value={authForm.username}
                 onChange={(e) => setAuthForm({ ...authForm, username: e.target.value })}
-                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-base sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
@@ -711,7 +772,7 @@ export default function App() {
                 placeholder="zaid@chatrio.com"
                 value={authForm.email}
                 onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
-                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-base sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
@@ -725,7 +786,7 @@ export default function App() {
                 placeholder="••••••••"
                 value={authForm.password}
                 onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
-                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-base sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
@@ -760,7 +821,7 @@ export default function App() {
   }
 
   return (
-    <div className={`h-screen w-screen overflow-hidden flex flex-col font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-[#070b14] text-slate-100' : 'bg-slate-100 text-slate-800'}`}>
+    <div className={`h-[100dvh] w-screen fixed inset-0 overflow-hidden flex flex-col font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-[#070b14] text-slate-100' : 'bg-slate-100 text-slate-800'}`}>
       
       {toastMessage && (
         <div className="fixed top-4 right-4 z-50 bg-slate-900/95 text-white px-4 py-3 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-center gap-2.5 text-xs animate-bounce max-w-sm">
@@ -770,7 +831,7 @@ export default function App() {
       )}
 
       {/* HEADER */}
-      <header className={`h-16 border-b px-4 flex items-center justify-between backdrop-blur-md z-20 ${theme === 'dark' ? 'border-slate-800/80 bg-[#0a0f1d]/90' : 'border-slate-200 bg-white/90'}`}>
+      <header className={`h-16 border-b px-4 flex items-center justify-between backdrop-blur-md z-20 flex-shrink-0 ${theme === 'dark' ? 'border-slate-800/80 bg-[#0a0f1d]/90' : 'border-slate-200 bg-white/90'}`}>
         <div className="flex items-center space-x-3">
           <div className="w-10 h-10 bg-emerald-500/20 text-emerald-400 rounded-xl flex items-center justify-center font-bold shadow-md">
             <MessageSquare className="w-6 h-6" />
@@ -823,12 +884,12 @@ export default function App() {
       </header>
 
       {/* MAIN CONTAINER */}
-      <div className="flex-1 flex overflow-hidden relative">
+      <div className="flex-1 flex overflow-hidden min-h-0 relative">
         
         {/* SIDEBAR */}
         <aside className={`w-full sm:w-80 md:w-96 border-r flex flex-col z-10 ${mobileChatOpen ? 'hidden sm:flex' : 'flex'} ${theme === 'dark' ? 'bg-[#0b101e]/80 border-slate-800/80' : 'bg-white border-slate-200'}`}>
           
-          <div className={`flex items-center border-b p-2 gap-1 ${theme === 'dark' ? 'border-slate-800/80 bg-[#070b15]' : 'border-slate-200 bg-slate-50'}`}>
+          <div className={`flex items-center border-b p-2 gap-1 flex-shrink-0 ${theme === 'dark' ? 'border-slate-800/80 bg-[#070b15]' : 'border-slate-200 bg-slate-50'}`}>
             <button onClick={() => setActiveTab('chats')} className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'chats' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400'}`}>
               <MessageSquare className="w-4 h-4" /> Chats
             </button>
@@ -844,7 +905,7 @@ export default function App() {
           </div>
 
           {/* SEARCH BAR */}
-          <div className="p-3 border-b border-slate-800/60 relative">
+          <div className="p-3 border-b border-slate-800/60 relative flex-shrink-0">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-500" />
               <input
@@ -852,7 +913,7 @@ export default function App() {
                 value={searchQuery}
                 onChange={(e) => handleSearchUsers(e.target.value)}
                 placeholder="Search @username to send request..."
-                className="w-full bg-slate-800/50 border border-slate-700/60 rounded-xl py-2.5 pl-10 pr-4 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                className="w-full bg-slate-800/50 border border-slate-700/60 rounded-xl py-2.5 pl-10 pr-4 text-base sm:text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
@@ -925,7 +986,7 @@ export default function App() {
           </div>
 
           {/* TABS LIST */}
-          <div className="flex-1 overflow-y-auto relative">
+          <div className="flex-1 overflow-y-auto relative min-h-0">
             {activeTab === 'chats' && (
               <div className="p-2 space-y-1">
                 {chats.length === 0 ? (
@@ -1045,7 +1106,7 @@ export default function App() {
         </aside>
 
         {/* CHAT DISPLAY */}
-        <main className={`flex-1 flex flex-col relative ${!mobileChatOpen ? 'hidden sm:flex' : 'flex'} ${theme === 'dark' ? 'bg-[#070b15]/90' : 'bg-slate-100'}`}>
+        <main className={`flex-1 flex flex-col relative h-full min-h-0 ${!mobileChatOpen ? 'hidden sm:flex' : 'flex'} ${theme === 'dark' ? 'bg-[#070b15]/90' : 'bg-slate-100'}`}>
           {!activeChat ? (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
               <MessageSquare className="w-12 h-12 text-emerald-400 mb-3" />
@@ -1053,8 +1114,8 @@ export default function App() {
               <p className="text-xs text-slate-400 max-w-sm mt-1">Search an exact @username to send a chat request and start cross-device messaging!</p>
             </div>
           ) : (
-            <div className="flex-1 flex flex-col h-full overflow-hidden">
-              <div className={`h-16 border-b px-4 flex items-center justify-between ${theme === 'dark' ? 'border-slate-800/80 bg-[#0a0f1e]/90' : 'border-slate-200 bg-white'}`}>
+            <div className="flex-1 flex flex-col h-full min-h-0 overflow-hidden">
+              <div className={`h-16 border-b px-4 flex items-center justify-between flex-shrink-0 ${theme === 'dark' ? 'border-slate-800/80 bg-[#0a0f1e]/90' : 'border-slate-200 bg-white'}`}>
                 <div className="flex items-center space-x-3">
                   <button onClick={() => setMobileChatOpen(false)} className="sm:hidden p-2 text-slate-400 hover:text-white">
                     <ArrowLeft className="w-5 h-5" />
@@ -1077,8 +1138,8 @@ export default function App() {
                 </div>
               </div>
 
-              {/* MESSAGES AREA WITH LONG PRESS & OPTIONS */}
-              <div className="flex-1 p-4 overflow-y-auto space-y-3" onClick={() => setContextMenuMsg(null)}>
+              {/* MESSAGES AREA - NO SCROLL GLITCH ON MOBILE KEYBOARD */}
+              <div className="flex-1 p-4 overflow-y-auto space-y-3 min-h-0" onClick={() => setContextMenuMsg(null)}>
                 {messages.length === 0 ? (
                   <p className="text-center text-xs text-slate-500 my-auto">No messages yet. Say hi to @{activeChat.username}! 👋</p>
                 ) : (
@@ -1131,7 +1192,7 @@ export default function App() {
                           ) : (
                             <>
                               {msg.image && <img src={msg.image} className="max-w-xs rounded-xl mb-2 object-cover" alt="" />}
-                              <p className="text-xs">{msg.text}</p>
+                              <p className="text-xs leading-relaxed">{msg.text}</p>
                             </>
                           )}
 
@@ -1166,11 +1227,12 @@ export default function App() {
                     );
                   })
                 )}
+                <div ref={chatMessagesEndRef} />
               </div>
 
               {/* REPLY PREVIEW BOX */}
               {replyingTo && (
-                <div className="bg-slate-800/90 border-t border-slate-700 p-2.5 flex items-center justify-between text-xs text-white">
+                <div className="bg-slate-800/90 border-t border-slate-700 p-2.5 flex items-center justify-between text-xs text-white flex-shrink-0">
                   <div className="flex items-center space-x-2 min-w-0 pr-2">
                     <Reply className="w-4 h-4 text-emerald-400 flex-shrink-0" />
                     <div className="min-w-0">
@@ -1184,8 +1246,8 @@ export default function App() {
                 </div>
               )}
 
-              {/* MESSAGE INPUT */}
-              <div className="p-3 border-t flex items-center space-x-2">
+              {/* FIXED MESSAGE INPUT BAR */}
+              <div className="p-3 border-t border-slate-800/80 bg-slate-900/90 flex items-center space-x-2 flex-shrink-0">
                 <label className="p-2 text-slate-400 hover:text-emerald-400 cursor-pointer transition-colors">
                   <Paperclip className="w-5 h-5" />
                   <input type="file" accept="image/*" className="hidden" onChange={handleImageAttachment} />
@@ -1196,7 +1258,7 @@ export default function App() {
                   onChange={(e) => setMessageInput(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                   placeholder="Type a message..."
-                  className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl py-2.5 px-4 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl py-2.5 px-4 text-base sm:text-xs text-white focus:outline-none focus:border-emerald-500"
                 />
                 <button onClick={handleSendMessage} className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-lg shadow-emerald-600/30 hover:bg-emerald-500 transition-colors">
                   <Send className="w-4 h-4" />
@@ -1206,6 +1268,60 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* REAL-TIME INCOMING CALL RINGING DIALOG */}
+      {incomingCallAlert && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-emerald-500/50 rounded-3xl w-full max-w-xs p-6 text-center space-y-6 shadow-2xl animate-bounce">
+            <div className="relative w-24 h-24 mx-auto">
+              <img src={incomingCallAlert.caller_avatar} className="w-24 h-24 rounded-full object-cover border-4 border-emerald-500 shadow-xl" alt="" />
+              <div className="absolute -bottom-1 -right-1 bg-emerald-500 text-white p-2 rounded-full animate-ping">
+                <PhoneIncoming className="w-4 h-4" />
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-bold text-white">@{incomingCallAlert.caller_name}</h3>
+              <p className="text-xs text-emerald-400 font-medium uppercase tracking-wider mt-1">
+                Incoming Chatrio {incomingCallAlert.call_type} Call...
+              </p>
+            </div>
+
+            <div className="flex items-center justify-center gap-4">
+              <button
+                onClick={handleAcceptIncomingCall}
+                className="w-12 h-12 bg-emerald-600 text-white rounded-full flex items-center justify-center shadow-lg shadow-emerald-600/40 hover:scale-110 transition-transform"
+                title="Accept Call"
+              >
+                <PhoneCall className="w-5 h-5" />
+              </button>
+              <button
+                onClick={handleDeclineIncomingCall}
+                className="w-12 h-12 bg-red-600 text-white rounded-full flex items-center justify-center shadow-lg shadow-red-600/40 hover:scale-110 transition-transform"
+                title="Decline Call"
+              >
+                <PhoneOff className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ACTIVE CALL MODAL */}
+      {currentCall && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md">
+          <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-6 text-center space-y-6 shadow-2xl">
+            <img src={currentCall.peerAvatar} className="w-24 h-24 rounded-full mx-auto border-4 border-slate-800 shadow-xl object-cover" alt="" />
+            <div>
+              <h3 className="text-xl font-bold">@{currentCall.peerName}</h3>
+              <p className="text-xs text-emerald-400 uppercase tracking-wider font-semibold mt-1">Chatrio {currentCall.type} Call Connected</p>
+            </div>
+            <button onClick={endCall} className="w-14 h-14 bg-red-600 text-white rounded-full mx-auto flex items-center justify-center shadow-lg shadow-red-600/40 hover:bg-red-700 transition-colors">
+              <PhoneOff className="w-6 h-6" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* LONG PRESS / MESSAGE CONTEXT MENU POPUP */}
       {contextMenuMsg && (
@@ -1349,22 +1465,6 @@ export default function App() {
                 ))
               )}
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* CALL MODAL */}
-      {currentCall && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md">
-          <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-6 text-center space-y-6 shadow-2xl">
-            <img src={currentCall.peerAvatar} className="w-24 h-24 rounded-full mx-auto border-4 border-slate-800" alt="" />
-            <div>
-              <h3 className="text-xl font-bold">@{currentCall.peerName}</h3>
-              <p className="text-xs text-emerald-400 uppercase tracking-wider font-semibold mt-1">Chatrio {currentCall.type} Call</p>
-            </div>
-            <button onClick={endCall} className="w-14 h-14 bg-red-600 text-white rounded-full mx-auto flex items-center justify-center shadow-lg shadow-red-600/40 hover:bg-red-700 transition-colors">
-              <PhoneOff className="w-6 h-6" />
-            </button>
           </div>
         </div>
       )}

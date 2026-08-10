@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 
 async function ensureCorrectSchema(sql) {
   try {
+    // 1. Users Table
     await sql.query(`
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -22,6 +23,7 @@ async function ensureCorrectSchema(sql) {
           SELECT 1 FROM information_schema.columns 
           WHERE table_name='users' AND column_name='id' AND (data_type LIKE '%int%' OR data_type LIKE '%numeric%')
         ) THEN 
+          DROP TABLE IF EXISTS calls CASCADE;
           DROP TABLE IF EXISTS messages CASCADE;
           DROP TABLE IF EXISTS requests CASCADE;
           DROP TABLE IF EXISTS users CASCADE;
@@ -56,7 +58,6 @@ async function ensureCorrectSchema(sql) {
       );
     `);
 
-    // Auto-migrate missing columns for existing tables
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS image TEXT;`);
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reaction TEXT DEFAULT '';`);
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER DEFAULT NULL;`);
@@ -73,6 +74,17 @@ async function ensureCorrectSchema(sql) {
         status TEXT DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT NOW(),
         CONSTRAINT unique_friendship UNIQUE (sender_id, receiver_id)
+      );
+    `);
+
+    await sql.query(`
+      CREATE TABLE IF NOT EXISTS calls (
+        id SERIAL PRIMARY KEY,
+        caller_id TEXT NOT NULL,
+        receiver_id TEXT NOT NULL,
+        call_type TEXT NOT NULL,
+        status TEXT DEFAULT 'ringing',
+        created_at TIMESTAMP DEFAULT NOW()
       );
     `);
   } catch (err) {
@@ -96,7 +108,7 @@ export async function GET() {
     const result = await sql.query(`SELECT NOW()`);
     return NextResponse.json({ 
       status: 'success', 
-      message: '✅ Chatrio by ED Database Schema fully updated with all missing columns!', 
+      message: '✅ Chatrio by ED Database Schema & Call Signaling fully updated!', 
       serverTime: result[0]?.now 
     });
   } catch (error) {
