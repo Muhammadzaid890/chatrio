@@ -33,8 +33,7 @@ import {
   PhoneCall,
   Mic,
   Square,
-  Volume2,
-  Download
+  Volume2
 } from 'lucide-react';
 
 const CLOUDINARY_CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || 'hp0bmfy7';
@@ -85,7 +84,7 @@ export default function App() {
   const audioChunksRef = useRef([]);
   const timerIntervalRef = useRef(null);
 
-  // Mobile PWA / APK Download States
+  // Mobile PWA Install Prompt State
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [showInstallPrompt, setShowInstallPrompt] = useState(false);
 
@@ -177,6 +176,7 @@ export default function App() {
       document.documentElement.classList.remove('dark');
     }
 
+    // Capture PWA Mobile Install Event
     const handleBeforeInstall = (e) => {
       e.preventDefault();
       setDeferredPrompt(e);
@@ -204,15 +204,8 @@ export default function App() {
     return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
   }, [theme]);
 
-  // Handle direct APK download and PWA installation prompt
+  // Handle PWA Install Action
   const handleInstallClick = async () => {
-    const link = document.createElement('a');
-    link.href = '/chatrio.apk';
-    link.download = 'chatrio.apk';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
     if (deferredPrompt) {
       deferredPrompt.prompt();
       const { outcome } = await deferredPrompt.userChoice;
@@ -222,7 +215,7 @@ export default function App() {
       setDeferredPrompt(null);
       setShowInstallPrompt(false);
     } else {
-      showToast('Downloading chatrio.apk to your Downloads folder... 📲');
+      showToast('Tap Chrome Menu (3 dots) -> "Install App" or "Add to Home screen"');
     }
   };
 
@@ -239,6 +232,7 @@ export default function App() {
     return () => clearInterval(heartbeatInterval);
   }, [currentUser.id]);
 
+  // Real-time Incoming Call Polling
   useEffect(() => {
     if (!currentUser.id) return;
 
@@ -882,20 +876,11 @@ export default function App() {
 
         <div className="bg-[#0f172a]/90 backdrop-blur-xl border border-slate-800/80 rounded-3xl w-full max-w-md p-6 sm:p-8 shadow-2xl relative z-10">
           <div className="text-center mb-6">
-            <div className="w-16 h-16 bg-black rounded-2xl flex items-center justify-center mx-auto mb-3 border border-amber-500/30 shadow-lg shadow-amber-500/10 overflow-hidden">
-              <img
-                src="/logo.png"
-                alt="Chatrio by ED"
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  e.target.onerror = null;
-                  e.target.style.display = 'none';
-                  e.target.parentNode.innerHTML = '<span class="text-amber-400 font-extrabold text-xl">ED</span>';
-                }}
-              />
+            <div className="w-16 h-16 bg-gradient-to-tr from-emerald-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-emerald-500/20">
+              <MessageSquare className="w-8 h-8 text-white" />
             </div>
-            <h2 className="text-2xl font-extrabold tracking-tight text-white">
-              Chatrio <span className="text-xs bg-amber-500/20 text-amber-400 px-2.5 py-1 rounded-full border border-amber-500/30">by ED</span>
+            <h2 className="text-2xl font-extrabold tracking-tight">
+              Chatrio <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-500/30">by ED</span>
             </h2>
             <p className="text-xs text-slate-400 mt-2">
               {authMode === 'register' ? 'Create your Chatrio account' : 'Login to your Chatrio account'}
@@ -913,7 +898,7 @@ export default function App() {
                 placeholder="e.g. zaidkhan"
                 value={authForm.username}
                 onChange={(e) => setAuthForm({ ...authForm, username: e.target.value })}
-                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-base sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-base sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
@@ -927,7 +912,7 @@ export default function App() {
                 placeholder="zaid@chatrio.com"
                 value={authForm.email}
                 onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
-                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-base sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-base sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
@@ -941,13 +926,13 @@ export default function App() {
                 placeholder="••••••••"
                 value={authForm.password}
                 onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
-                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-base sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-3 px-4 text-base sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-gradient-to-r from-amber-500 to-yellow-600 text-black font-extrabold rounded-xl shadow-lg shadow-amber-500/25 transition-all hover:scale-[1.01] active:scale-[0.99]"
+              className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold rounded-xl shadow-lg shadow-emerald-500/25 transition-all hover:scale-[1.01] active:scale-[0.99]"
             >
               {authMode === 'register' ? 'Register Account' : 'Log In'}
             </button>
@@ -957,14 +942,14 @@ export default function App() {
             {authMode === 'register' ? (
               <p>
                 Already registered?{' '}
-                <button type="button" onClick={() => setAuthMode('login')} className="text-amber-400 font-semibold hover:underline ml-1">
+                <button type="button" onClick={() => setAuthMode('login')} className="text-emerald-400 font-semibold hover:underline ml-1">
                   Log In
                 </button>
               </p>
             ) : (
               <p>
                 Need an account?{' '}
-                <button type="button" onClick={() => setAuthMode('register')} className="text-amber-400 font-semibold hover:underline ml-1">
+                <button type="button" onClick={() => setAuthMode('register')} className="text-emerald-400 font-semibold hover:underline ml-1">
                   Create One
                 </button>
               </p>
@@ -988,21 +973,12 @@ export default function App() {
       {/* HEADER */}
       <header className={`h-16 border-b px-4 flex items-center justify-between backdrop-blur-md z-20 flex-shrink-0 ${theme === 'dark' ? 'border-slate-800/80 bg-[#0a0f1d]/90' : 'border-slate-200 bg-white/90'}`}>
         <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 bg-black rounded-xl border border-amber-500/30 overflow-hidden flex items-center justify-center flex-shrink-0 shadow-md">
-            <img
-              src="/logo.png"
-              alt="ED Logo"
-              className="w-full h-full object-cover"
-              onError={(e) => {
-                e.target.onerror = null;
-                e.target.style.display = 'none';
-                e.target.parentNode.innerHTML = '<span class="text-amber-400 font-extrabold text-sm">ED</span>';
-              }}
-            />
+          <div className="w-10 h-10 bg-emerald-500/20 text-emerald-400 rounded-xl flex items-center justify-center font-bold shadow-md">
+            <MessageSquare className="w-6 h-6" />
           </div>
           <div>
             <h1 className="font-extrabold text-lg leading-tight">
-              Chatrio <span className="text-xs text-amber-400 font-medium">by ED</span>
+              Chatrio <span className="text-xs text-emerald-400 font-medium">by ED</span>
             </h1>
             <p className="text-[11px] text-emerald-400 flex items-center gap-1 font-medium">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> @{currentUser.username}
@@ -1013,10 +989,10 @@ export default function App() {
         <div className="flex items-center space-x-2.5">
           <button
             onClick={handleInstallClick}
-            className="px-3 py-1.5 bg-amber-500/20 text-amber-400 hover:bg-amber-500 hover:text-black border border-amber-500/40 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all"
+            className="px-3 py-1.5 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white border border-emerald-500/40 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all"
             title="Download App"
           >
-            <Download className="w-3.5 h-3.5" /> Download App
+            <span className="text-sm">📱</span> Download App
           </button>
 
           <button
@@ -1024,7 +1000,7 @@ export default function App() {
             className="relative w-10 h-10 rounded-xl bg-slate-800/60 flex items-center justify-center text-slate-300 hover:bg-slate-700/60 transition-all"
             title="Friend Requests"
           >
-            <Bell className="w-5 h-5 text-amber-400" />
+            <Bell className="w-5 h-5 text-emerald-400" />
             {incomingRequests.length > 0 && (
               <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center animate-pulse">
                 {incomingRequests.length}
@@ -1062,16 +1038,16 @@ export default function App() {
         <aside className={`w-full sm:w-80 md:w-96 border-r flex flex-col z-10 ${mobileChatOpen ? 'hidden sm:flex' : 'flex'} ${theme === 'dark' ? 'bg-[#0b101e]/80 border-slate-800/80' : 'bg-white border-slate-200'}`}>
           
           <div className={`flex items-center border-b p-2 gap-1 flex-shrink-0 ${theme === 'dark' ? 'border-slate-800/80 bg-[#070b15]' : 'border-slate-200 bg-slate-50'}`}>
-            <button onClick={() => setActiveTab('chats')} className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'chats' ? 'bg-slate-800 text-amber-400' : 'text-slate-400'}`}>
+            <button onClick={() => setActiveTab('chats')} className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'chats' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400'}`}>
               <MessageSquare className="w-4 h-4" /> Chats
             </button>
-            <button onClick={() => setActiveTab('status')} className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'status' ? 'bg-slate-800 text-amber-400' : 'text-slate-400'}`}>
+            <button onClick={() => setActiveTab('status')} className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'status' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400'}`}>
               <Circle className="w-4 h-4" /> Status
             </button>
-            <button onClick={() => setActiveTab('calls')} className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'calls' ? 'bg-slate-800 text-amber-400' : 'text-slate-400'}`}>
+            <button onClick={() => setActiveTab('calls')} className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'calls' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400'}`}>
               <Phone className="w-4 h-4" /> Calls
             </button>
-            <button onClick={() => setActiveTab('profile')} className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'profile' ? 'bg-slate-800 text-amber-400' : 'text-slate-400'}`}>
+            <button onClick={() => setActiveTab('profile')} className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${activeTab === 'profile' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400'}`}>
               <User className="w-4 h-4" /> Profile
             </button>
           </div>
@@ -1085,7 +1061,7 @@ export default function App() {
                 value={searchQuery}
                 onChange={(e) => handleSearchUsers(e.target.value)}
                 placeholder="Search @username to send request..."
-                className="w-full bg-slate-800/50 border border-slate-700/60 rounded-xl py-2.5 pl-10 pr-4 text-base sm:text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                className="w-full bg-slate-800/50 border border-slate-700/60 rounded-xl py-2.5 pl-10 pr-4 text-base sm:text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
@@ -1114,7 +1090,7 @@ export default function App() {
                           </div>
                           <div className="min-w-0">
                             <h4 className="font-semibold text-xs text-white truncate">@{u.username}</h4>
-                            <p className="text-[10px] text-amber-400">{formatLastSeen(u.last_seen)}</p>
+                            <p className="text-[10px] text-emerald-400">{formatLastSeen(u.last_seen)}</p>
                           </div>
                         </div>
 
@@ -1143,7 +1119,7 @@ export default function App() {
                           ) : (
                             <button
                               onClick={() => handleSendRequest(u)}
-                              className="px-3 py-1.5 bg-amber-500/20 text-amber-400 hover:bg-amber-500 hover:text-black border border-amber-500/40 rounded-lg text-xs font-medium flex items-center gap-1 transition-all"
+                              className="px-3 py-1.5 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white border border-emerald-500/40 rounded-lg text-xs font-medium flex items-center gap-1 transition-all"
                             >
                               <UserPlus className="w-3.5 h-3.5" /> Request
                             </button>
@@ -1163,7 +1139,7 @@ export default function App() {
               <div className="p-2 space-y-1">
                 {chats.length === 0 ? (
                   <div className="p-8 text-center text-xs text-slate-500">
-                    <UserPlus className="w-10 h-10 text-amber-500/40 mx-auto mb-2" />
+                    <UserPlus className="w-10 h-10 text-emerald-500/40 mx-auto mb-2" />
                     <p className="font-semibold text-slate-400">No active conversations</p>
                     <p className="mt-1 text-[11px] max-w-xs mx-auto">
                       Search @username in the search bar above to send a request. Once accepted, chats stay here permanently!
@@ -1237,14 +1213,14 @@ export default function App() {
               <div className="p-4 space-y-4">
                 <div className="flex flex-col items-center text-center">
                   <label className="relative group cursor-pointer">
-                    <img src={currentUser.avatar} className="w-24 h-24 rounded-full object-cover border-4 border-amber-500/80 shadow-xl" alt="" />
+                    <img src={currentUser.avatar} className="w-24 h-24 rounded-full object-cover border-4 border-emerald-500/80 shadow-xl" alt="" />
                     <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                       <Camera className="w-6 h-6 text-white" />
                     </div>
                     <input type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
                   </label>
                   <h3 className="mt-2 font-bold text-lg">@{currentUser.username}</h3>
-                  <p className="text-xs text-amber-400">{currentUser.email}</p>
+                  <p className="text-xs text-emerald-400">{currentUser.email}</p>
                 </div>
 
                 <div className="space-y-3">
@@ -1268,7 +1244,7 @@ export default function App() {
                     />
                   </div>
 
-                  <button onClick={handleSaveProfile} className="w-full py-3 bg-amber-500 text-black font-extrabold rounded-xl text-xs shadow-lg shadow-amber-500/30 hover:bg-amber-400 transition-colors">
+                  <button onClick={handleSaveProfile} className="w-full py-3 bg-emerald-600 text-white rounded-xl font-semibold text-xs shadow-lg shadow-emerald-600/30 hover:bg-emerald-500 transition-colors">
                     Save Profile
                   </button>
                 </div>
@@ -1281,18 +1257,7 @@ export default function App() {
         <main className={`flex-1 flex flex-col relative h-full min-h-0 ${!mobileChatOpen ? 'hidden sm:flex' : 'flex'} ${theme === 'dark' ? 'bg-[#070b15]/90' : 'bg-slate-100'}`}>
           {!activeChat ? (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-              <div className="w-16 h-16 bg-black rounded-2xl flex items-center justify-center mb-3 border border-amber-500/30 shadow-xl overflow-hidden">
-                <img
-                  src="/logo.png"
-                  alt="ED Logo"
-                  className="w-full h-full object-cover"
-                  onError={(e) => {
-                    e.target.onerror = null;
-                    e.target.style.display = 'none';
-                    e.target.parentNode.innerHTML = '<span class="text-amber-400 font-extrabold text-xl">ED</span>';
-                  }}
-                />
-              </div>
+              <MessageSquare className="w-12 h-12 text-emerald-400 mb-3" />
               <h2 className="text-xl font-bold">Chatrio by ED</h2>
               <p className="text-xs text-slate-400 max-w-sm mt-1">Search an exact @username to send a chat request and start cross-device messaging!</p>
             </div>
@@ -1429,9 +1394,9 @@ export default function App() {
               {replyingTo && (
                 <div className="bg-slate-800/90 border-t border-slate-700 p-2.5 flex items-center justify-between text-xs text-white flex-shrink-0">
                   <div className="flex items-center space-x-2 min-w-0 pr-2">
-                    <Reply className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                    <Reply className="w-4 h-4 text-emerald-400 flex-shrink-0" />
                     <div className="min-w-0">
-                      <p className="font-semibold text-amber-400 text-[11px]">Replying to message</p>
+                      <p className="font-semibold text-emerald-400 text-[11px]">Replying to message</p>
                       <p className="text-slate-300 truncate text-[10px]">{replyingTo.text}</p>
                     </div>
                   </div>
@@ -1459,7 +1424,7 @@ export default function App() {
                 </div>
               ) : (
                 <div className="p-3 border-t border-slate-800/80 bg-slate-900/90 flex items-center space-x-2 flex-shrink-0">
-                  <label className="p-2 text-slate-400 hover:text-amber-400 cursor-pointer transition-colors">
+                  <label className="p-2 text-slate-400 hover:text-emerald-400 cursor-pointer transition-colors">
                     <Paperclip className="w-5 h-5" />
                     <input type="file" accept="image/*" className="hidden" onChange={handleImageAttachment} />
                   </label>
@@ -1474,9 +1439,9 @@ export default function App() {
                     onChange={(e) => setMessageInput(e.target.value)}
                     onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                     placeholder="Type a message..."
-                    className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl py-2.5 px-4 text-base sm:text-xs text-white focus:outline-none focus:border-amber-500"
+                    className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl py-2.5 px-4 text-base sm:text-xs text-white focus:outline-none focus:border-emerald-500"
                   />
-                  <button onClick={handleSendMessage} className="p-2.5 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-xl shadow-lg shadow-amber-500/20 transition-colors">
+                  <button onClick={handleSendMessage} className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-lg shadow-emerald-600/30 hover:bg-emerald-500 transition-colors">
                     <Send className="w-4 h-4" />
                   </button>
                 </div>
@@ -1531,7 +1496,7 @@ export default function App() {
             <img src={currentCall.peerAvatar} className="w-24 h-24 rounded-full mx-auto border-4 border-slate-800 shadow-xl object-cover" alt="" />
             <div>
               <h3 className="text-xl font-bold">@{currentCall.peerName}</h3>
-              <p className="text-xs text-amber-400 uppercase tracking-wider font-semibold mt-1">Chatrio {currentCall.type} Call Connected</p>
+              <p className="text-xs text-emerald-400 uppercase tracking-wider font-semibold mt-1">Chatrio {currentCall.type} Call Connected</p>
             </div>
             <button onClick={endCall} className="w-14 h-14 bg-red-600 text-white rounded-full mx-auto flex items-center justify-center shadow-lg shadow-red-600/40 hover:bg-red-700 transition-colors">
               <PhoneOff className="w-6 h-6" />
@@ -1569,7 +1534,7 @@ export default function App() {
                   setReplyingTo(contextMenuMsg);
                   setContextMenuMsg(null);
                 }}
-                className="w-full p-2.5 bg-slate-800/50 hover:bg-slate-800 rounded-xl text-left text-amber-400 font-semibold flex items-center gap-2"
+                className="w-full p-2.5 bg-slate-800/50 hover:bg-slate-800 rounded-xl text-left text-emerald-400 font-semibold flex items-center gap-2"
               >
                 <Reply className="w-4 h-4" /> Reply
               </button>
@@ -1626,7 +1591,7 @@ export default function App() {
                     <img src={c.avatar} className="w-9 h-9 rounded-full object-cover" alt="" />
                     <span className="font-semibold text-xs text-white">@{c.username}</span>
                   </div>
-                  <Share2 className="w-4 h-4 text-amber-400" />
+                  <Share2 className="w-4 h-4 text-emerald-400" />
                 </div>
               ))}
             </div>
@@ -1640,7 +1605,7 @@ export default function App() {
           <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-sm flex items-center gap-2 text-white">
-                <Bell className="w-4 h-4 text-amber-400" /> Incoming Chat Requests
+                <Bell className="w-4 h-4 text-emerald-400" /> Incoming Chat Requests
               </h3>
               <button onClick={() => setShowRequestsModal(false)} className="text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
@@ -1699,10 +1664,10 @@ export default function App() {
               value={statusTextInput}
               onChange={(e) => setStatusTextInput(e.target.value)}
               placeholder="What is on your mind?"
-              className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-amber-500"
+              className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-emerald-500"
               rows={3}
             />
-            <button onClick={handlePublishStatus} className="w-full py-2.5 bg-amber-500 text-black font-extrabold rounded-xl text-xs hover:bg-amber-400 transition-colors">
+            <button onClick={handlePublishStatus} className="w-full py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-500 transition-colors">
               Publish Status
             </button>
           </div>
@@ -1733,29 +1698,20 @@ export default function App() {
 
       {/* MOBILE POPUP: DOWNLOAD / INSTALL APP BANNER */}
       {showInstallPrompt && (
-        <div className="fixed bottom-4 left-4 right-4 z-50 bg-slate-900/95 border-2 border-amber-500 rounded-2xl p-4 shadow-2xl backdrop-blur-lg flex items-center justify-between gap-3 animate-bounce">
+        <div className="fixed bottom-4 left-4 right-4 z-50 bg-slate-900/95 border-2 border-emerald-500 rounded-2xl p-4 shadow-2xl backdrop-blur-lg flex items-center justify-between gap-3 animate-bounce">
           <div className="flex items-center space-x-3 min-w-0">
-            <div className="w-11 h-11 bg-black text-amber-400 rounded-xl flex items-center justify-center flex-shrink-0 font-bold border border-amber-500/30 overflow-hidden">
-              <img
-                src="/logo.png"
-                alt="ED Logo"
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  e.target.onerror = null;
-                  e.target.style.display = 'none';
-                  e.target.parentNode.innerText = 'ED';
-                }}
-              />
+            <div className="w-11 h-11 bg-emerald-500/20 text-emerald-400 rounded-xl flex items-center justify-center flex-shrink-0 font-bold text-xl border border-emerald-500/30">
+              📱
             </div>
             <div className="min-w-0">
               <h4 className="font-extrabold text-xs sm:text-sm text-white truncate">Install Chatrio App</h4>
-              <p className="text-[10px] text-amber-400 font-medium truncate">Get app on your mobile screen!</p>
+              <p className="text-[10px] text-emerald-400 font-medium truncate">Get app on your mobile screen!</p>
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={handleInstallClick}
-              className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-black font-extrabold rounded-xl text-xs shadow-lg shadow-amber-500/30 transition-all"
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-600/30 transition-all"
             >
               Install Now
             </button>
