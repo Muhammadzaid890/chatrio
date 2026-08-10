@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 
 async function ensureCorrectSchema(sql) {
   try {
-    // 1. Users Table
+    // 1. Users table
     await sql.query(`
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -16,7 +16,7 @@ async function ensureCorrectSchema(sql) {
       );
     `);
 
-    // Auto fix numeric IDs if legacy table exists
+    // Auto fix if users id is numeric
     await sql.query(`
       DO $$ 
       BEGIN 
@@ -42,7 +42,6 @@ async function ensureCorrectSchema(sql) {
       END $$;
     `);
 
-    // 2. Messages Table
     await sql.query(`
       CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
@@ -61,7 +60,7 @@ async function ensureCorrectSchema(sql) {
       );
     `);
 
-    // Ensure all required columns exist
+    // Ensure all optional columns exist
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS image TEXT;`);
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS audio TEXT;`);
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reaction TEXT DEFAULT '';`);
@@ -71,7 +70,6 @@ async function ensureCorrectSchema(sql) {
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_by_users TEXT DEFAULT '';`);
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS seen_at TIMESTAMP;`);
 
-    // 3. Requests Table
     await sql.query(`
       CREATE TABLE IF NOT EXISTS requests (
         id SERIAL PRIMARY KEY,
@@ -83,7 +81,6 @@ async function ensureCorrectSchema(sql) {
       );
     `);
 
-    // 4. Calls Table for Cross-Device Signaling
     await sql.query(`
       CREATE TABLE IF NOT EXISTS calls (
         id SERIAL PRIMARY KEY,
@@ -115,7 +112,7 @@ export async function GET() {
     const result = await sql.query(`SELECT NOW()`);
     return NextResponse.json({ 
       status: 'success', 
-      message: '✅ Chatrio by ED Database Schema & Real-time Call Signaling updated!', 
+      message: '✅ Chatrio DB Schema Auto-Fixed & Real-time Calls/Voice Notes Enabled!', 
       serverTime: result[0]?.now 
     });
   } catch (error) {

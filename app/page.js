@@ -345,8 +345,10 @@ export default function App() {
       formData.append('file', file);
       formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
 
+      const resourceType = (file.type && (file.type.startsWith('audio/') || file.type.startsWith('video/'))) ? 'video' : 'image';
+
       const response = await fetch(
-        `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`,
+        `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`,
         { method: 'POST', body: formData }
       );
 
@@ -525,11 +527,25 @@ export default function App() {
   const startRecordingAudio = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
+
+      let options = {};
+      if (typeof MediaRecorder !== 'undefined') {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          options = { mimeType: 'audio/webm;codecs=opus' };
+        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+          options = { mimeType: 'audio/webm' };
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          options = { mimeType: 'audio/mp4' };
+        } else if (MediaRecorder.isTypeSupported('audio/aac')) {
+          options = { mimeType: 'audio/aac' };
+        }
+      }
+
+      mediaRecorderRef.current = new MediaRecorder(stream, options);
       audioChunksRef.current = [];
 
       mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
+        if (event.data && event.data.size > 0) {
           audioChunksRef.current.push(event.data);
         }
       };
@@ -554,10 +570,13 @@ export default function App() {
       clearInterval(timerIntervalRef.current);
       setIsRecordingAudio(false);
 
-      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-      const audioFile = new File([audioBlob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
+      const actualMimeType = mediaRecorderRef.current.mimeType || 'audio/webm';
+      const ext = actualMimeType.includes('mp4') || actualMimeType.includes('aac') ? 'm4a' : 'webm';
 
-      showToast('Sending voice note...');
+      const audioBlob = new Blob(audioChunksRef.current, { type: actualMimeType });
+      const audioFile = new File([audioBlob], `voice_${Date.now()}.${ext}`, { type: actualMimeType });
+
+      showToast('Uploading & sending voice note...');
       const audioUrl = await uploadToCloudinary(audioFile);
 
       const res = await queryNeon(
@@ -584,11 +603,17 @@ export default function App() {
     };
 
     mediaRecorderRef.current.stop();
+    if (mediaRecorderRef.current.stream) {
+      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+    }
   };
 
   const cancelAudioRecording = () => {
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
+      if (mediaRecorderRef.current.stream) {
+        mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+      }
     }
     clearInterval(timerIntervalRef.current);
     setIsRecordingAudio(false);
@@ -1190,7 +1215,7 @@ export default function App() {
           </div>
         </aside>
 
-        {/* CHAT DISPLAY */}
+        {}
         <main className={`flex-1 flex flex-col relative h-full min-h-0 ${!mobileChatOpen ? 'hidden sm:flex' : 'flex'} ${theme === 'dark' ? 'bg-[#070b15]/90' : 'bg-slate-100'}`}>
           {!activeChat ? (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
@@ -1274,12 +1299,23 @@ export default function App() {
                           ) : (
                             <>
                               {msg.image && <img src={msg.image} className="max-w-xs rounded-xl mb-2 object-cover" alt="" />}
+                              
+                              {/* AUDIO VOICE NOTE PLAYER */}
                               {msg.audio && (
-                                <div className="mb-2 flex items-center gap-2 bg-black/20 p-2 rounded-xl">
-                                  <Volume2 className="w-4 h-4 text-emerald-300 flex-shrink-0 animate-pulse" />
-                                  <audio controls src={msg.audio} className="h-8 w-48 sm:w-56" />
+                                <div className="mb-2 flex flex-col gap-1 bg-black/30 p-2.5 rounded-xl border border-white/10 min-w-[200px] sm:min-w-[240px]">
+                                  <div className="flex items-center gap-2 text-xs font-semibold text-emerald-300 mb-0.5">
+                                    <Volume2 className="w-4 h-4 text-emerald-300 flex-shrink-0 animate-pulse" />
+                                    <span>Voice Note</span>
+                                  </div>
+                                  <audio
+                                    controls
+                                    preload="metadata"
+                                    src={msg.audio}
+                                    className="w-full h-9 rounded-lg"
+                                  />
                                 </div>
                               )}
+
                               <p className="text-xs leading-relaxed">{msg.text}</p>
                             </>
                           )}
@@ -1368,7 +1404,7 @@ export default function App() {
                     className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl py-2.5 px-4 text-base sm:text-xs text-white focus:outline-none focus:border-emerald-500"
                   />
                   <button onClick={handleSendMessage} className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-lg shadow-emerald-600/30 hover:bg-emerald-500 transition-colors">
-                    <Send className="w-4 h-4" />
+                    Send <Send className="w-4 h-4" />
                   </button>
                 </div>
               )}
@@ -1377,7 +1413,7 @@ export default function App() {
         </main>
       </div>
 
-      {/* REAL-TIME INCOMING CALL RINGING DIALOG */}
+      {}
       {incomingCallAlert && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-emerald-500/50 rounded-3xl w-full max-w-xs p-6 text-center space-y-6 shadow-2xl animate-bounce">
