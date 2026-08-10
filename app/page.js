@@ -117,7 +117,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    document.title = 'Chatrio by Zaid';
+    document.title = 'Chatrio by ED';
 
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -486,7 +486,7 @@ export default function App() {
               <MessageSquare className="w-8 h-8 text-white" />
             </div>
             <h2 className="text-2xl font-extrabold tracking-tight">
-              Chatrio <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-500/30">by Zaid</span>
+              Chatrio <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-500/30">by ED</span>
             </h2>
             <p className="text-xs text-slate-400 mt-2">
               {authMode === 'register' ? 'Create your Chatrio account' : 'Login to your Chatrio account'}
@@ -584,7 +584,7 @@ export default function App() {
           </div>
           <div>
             <h1 className="font-extrabold text-lg leading-tight">
-              Chatrio <span className="text-xs text-emerald-400 font-medium">by Zaid</span>
+              Chatrio <span className="text-xs text-emerald-400 font-medium">by ED</span>
             </h1>
             <p className="text-[11px] text-emerald-400 flex items-center gap-1 font-medium">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> @{currentUser.username}
@@ -804,8 +804,8 @@ export default function App() {
           {!activeChat ? (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
               <MessageSquare className="w-12 h-12 text-emerald-400 mb-3" />
-              <h2 className="text-xl font-bold">Chatrio by Zaid</h2>
-              <p className="text-xs text-slate-400 max-w-sm mt-1">Search an exact @username to start cross-device messaging!</p>
+              <h2 className="text-xl font-bold">Chatrio by ED</h2>
+              <p className="text-xs text-slate-400 max-w-sm mt-1">Search an exact @username to send a chat request and start cross-device messaging!</p>
             </div>
           ) : (
             <div className="flex-1 flex flex-col h-full overflow-hidden">
