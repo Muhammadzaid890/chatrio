@@ -56,6 +56,8 @@ async function ensureCorrectSchema(sql) {
       );
     `);
 
+    // Auto-migrate missing columns for existing tables
+    await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS image TEXT;`);
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reaction TEXT DEFAULT '';`);
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER DEFAULT NULL;`);
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_text TEXT DEFAULT '';`);
@@ -94,7 +96,7 @@ export async function GET() {
     const result = await sql.query(`SELECT NOW()`);
     return NextResponse.json({ 
       status: 'success', 
-      message: '✅ Chatrio by ED Database Schema fully updated with reaction, reply & unsent features!', 
+      message: '✅ Chatrio by ED Database Schema fully updated with all missing columns!', 
       serverTime: result[0]?.now 
     });
   } catch (error) {
