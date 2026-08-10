@@ -16,6 +16,7 @@ async function ensureCorrectSchema(sql) {
       );
     `);
 
+    // Auto fix numeric IDs if legacy table exists
     await sql.query(`
       DO $$ 
       BEGIN 
@@ -41,6 +42,7 @@ async function ensureCorrectSchema(sql) {
       END $$;
     `);
 
+    // 2. Messages Table
     await sql.query(`
       CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
@@ -48,6 +50,7 @@ async function ensureCorrectSchema(sql) {
         receiver_id TEXT NOT NULL,
         text TEXT,
         image TEXT,
+        audio TEXT,
         reaction TEXT DEFAULT '',
         reply_to_id INTEGER DEFAULT NULL,
         reply_to_text TEXT DEFAULT '',
@@ -58,7 +61,9 @@ async function ensureCorrectSchema(sql) {
       );
     `);
 
+    // Ensure all required columns exist
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS image TEXT;`);
+    await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS audio TEXT;`);
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reaction TEXT DEFAULT '';`);
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER DEFAULT NULL;`);
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_text TEXT DEFAULT '';`);
@@ -66,6 +71,7 @@ async function ensureCorrectSchema(sql) {
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_by_users TEXT DEFAULT '';`);
     await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS seen_at TIMESTAMP;`);
 
+    // 3. Requests Table
     await sql.query(`
       CREATE TABLE IF NOT EXISTS requests (
         id SERIAL PRIMARY KEY,
@@ -77,6 +83,7 @@ async function ensureCorrectSchema(sql) {
       );
     `);
 
+    // 4. Calls Table for Cross-Device Signaling
     await sql.query(`
       CREATE TABLE IF NOT EXISTS calls (
         id SERIAL PRIMARY KEY,
@@ -108,7 +115,7 @@ export async function GET() {
     const result = await sql.query(`SELECT NOW()`);
     return NextResponse.json({ 
       status: 'success', 
-      message: '✅ Chatrio by ED Database Schema & Call Signaling fully updated!', 
+      message: '✅ Chatrio by ED Database Schema & Real-time Call Signaling updated!', 
       serverTime: result[0]?.now 
     });
   } catch (error) {

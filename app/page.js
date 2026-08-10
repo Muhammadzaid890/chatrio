@@ -30,7 +30,10 @@ import {
   CornerDownRight,
   Share2,
   PhoneIncoming,
-  PhoneCall
+  PhoneCall,
+  Mic,
+  Square,
+  Volume2
 } from 'lucide-react';
 
 const CLOUDINARY_CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || 'hp0bmfy7';
@@ -39,6 +42,7 @@ const CLOUDINARY_UPLOAD_PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESE
 export default function App() {
   const [theme, setTheme] = useState('dark');
 
+  // Auth States
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authMode, setAuthMode] = useState('register');
   const [authForm, setAuthForm] = useState({
@@ -55,39 +59,49 @@ export default function App() {
     bio: 'Hey there! I am using Chatrio by ED 🚀'
   });
 
+  // Navigation & UI States
   const [activeTab, setActiveTab] = useState('chats');
   const [activeChat, setActiveChat] = useState(null);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
 
+  // Search & Friend Requests States
   const [searchQuery, setSearchQuery] = useState('');
   const [searchedUsers, setSearchedUsers] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
-
   const [incomingRequests, setIncomingRequests] = useState([]);
   const [showRequestsModal, setShowRequestsModal] = useState(false);
 
+  // Status & Calls States
   const [showCreateStatusModal, setShowCreateStatusModal] = useState(false);
   const [activeStatusViewer, setActiveStatusViewer] = useState(null);
-
   const [currentCall, setCurrentCall] = useState(null);
   const [incomingCallAlert, setIncomingCallAlert] = useState(null);
-  const mediaStreamRef = useRef(null);
-  const chatMessagesEndRef = useRef(null);
 
+  // Audio Note / Voice Message States
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const timerIntervalRef = useRef(null);
+
+  // Input & Messaging States
   const [messageInput, setMessageInput] = useState('');
   const [statusTextInput, setStatusTextInput] = useState('');
   const [toastMessage, setToastMessage] = useState('');
-
   const [replyingTo, setReplyingTo] = useState(null);
   const [contextMenuMsg, setContextMenuMsg] = useState(null);
   const [forwardModalMsg, setForwardModalMsg] = useState(null);
 
+  const chatMessagesEndRef = useRef(null);
+
+  // Profile Form State
   const [profileForm, setProfileForm] = useState({
     username: '',
     email: '',
     bio: ''
   });
 
+  // Main Lists States
   const [chats, setChats] = useState([]);
   const [messages, setMessages] = useState([]);
   const [statuses, setStatuses] = useState([]);
@@ -175,6 +189,7 @@ export default function App() {
     }
   }, [theme]);
 
+  // Heartbeat Online Sync
   useEffect(() => {
     if (!currentUser.id) return;
 
@@ -183,14 +198,11 @@ export default function App() {
     };
 
     updateHeartbeat();
-
-    const heartbeatInterval = setInterval(() => {
-      queryNeon(`UPDATE users SET last_seen = NOW() WHERE id = $1`, [currentUser.id]);
-    }, 10000);
-
+    const heartbeatInterval = setInterval(updateHeartbeat, 10000);
     return () => clearInterval(heartbeatInterval);
   }, [currentUser.id]);
 
+  // Real-time Incoming Call Polling
   useEffect(() => {
     if (!currentUser.id) return;
 
@@ -212,7 +224,7 @@ export default function App() {
     };
 
     pollIncomingCalls();
-    const callInterval = setInterval(pollIncomingCalls, 2500);
+    const callInterval = setInterval(pollIncomingCalls, 1500);
     return () => clearInterval(callInterval);
   }, [currentUser.id]);
 
@@ -257,7 +269,7 @@ export default function App() {
     if (!currentUser.id) return;
 
     loadAcceptedChatsAndRequests();
-    const interval = setInterval(loadAcceptedChatsAndRequests, 4000);
+    const interval = setInterval(loadAcceptedChatsAndRequests, 3000);
     return () => clearInterval(interval);
   }, [currentUser.id]);
 
@@ -272,7 +284,7 @@ export default function App() {
       );
 
       const msgRes = await queryNeon(
-        `SELECT id, sender_id, receiver_id, text, image, reaction, reply_to_id, reply_to_text, is_deleted_everyone, deleted_by_users, seen_at, created_at FROM messages 
+        `SELECT id, sender_id, receiver_id, text, image, audio, reaction, reply_to_id, reply_to_text, is_deleted_everyone, deleted_by_users, seen_at, created_at FROM messages 
          WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1) 
          ORDER BY id ASC`,
         [currentUser.id, activeChat.id]
@@ -290,6 +302,7 @@ export default function App() {
             receiverId: m.receiver_id,
             text: m.text,
             image: m.image,
+            audio: m.audio,
             reaction: m.reaction,
             replyToId: m.reply_to_id,
             replyToText: m.reply_to_text,
@@ -333,7 +346,7 @@ export default function App() {
       formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
 
       const response = await fetch(
-        `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
+        `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`,
         { method: 'POST', body: formData }
       );
 
@@ -509,6 +522,79 @@ export default function App() {
     setActiveTab('chats');
   };
 
+  const startRecordingAudio = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorderRef.current.start();
+      setIsRecordingAudio(true);
+      setRecordingDuration(0);
+
+      timerIntervalRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error('Microphone access error:', err);
+      showToast('Microphone access denied or unsupported');
+    }
+  };
+
+  const stopAndSendAudioMessage = () => {
+    if (!mediaRecorderRef.current || !activeChat) return;
+
+    mediaRecorderRef.current.onstop = async () => {
+      clearInterval(timerIntervalRef.current);
+      setIsRecordingAudio(false);
+
+      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      const audioFile = new File([audioBlob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
+
+      showToast('Sending voice note...');
+      const audioUrl = await uploadToCloudinary(audioFile);
+
+      const res = await queryNeon(
+        `INSERT INTO messages (sender_id, receiver_id, text, audio) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [currentUser.id, activeChat.id, '🎤 Voice Note', audioUrl]
+      );
+
+      if (res && res.rows && res.rows[0]) {
+        const row = res.rows[0];
+        showToast('Voice note sent!');
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: row.id,
+            senderId: currentUser.id,
+            receiverId: activeChat.id,
+            text: '🎤 Voice Note',
+            audio: audioUrl,
+            createdAt: row.created_at,
+            seenAt: null
+          }
+        ]);
+      }
+    };
+
+    mediaRecorderRef.current.stop();
+  };
+
+  const cancelAudioRecording = () => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+    }
+    clearInterval(timerIntervalRef.current);
+    setIsRecordingAudio(false);
+    showToast('Voice note cancelled');
+  };
+
   const handleSendMessage = async () => {
     if (!messageInput.trim() || !activeChat) return;
 
@@ -604,8 +690,8 @@ export default function App() {
     showToast(`Forwarding to @${targetChat.username}...`);
 
     await queryNeon(
-      `INSERT INTO messages (sender_id, receiver_id, text, image) VALUES ($1, $2, $3, $4)`,
-      [currentUser.id, targetChat.id, `↪️ ${forwardModalMsg.text}`, forwardModalMsg.image || null]
+      `INSERT INTO messages (sender_id, receiver_id, text, image, audio) VALUES ($1, $2, $3, $4, $5)`,
+      [currentUser.id, targetChat.id, `↪️ ${forwardModalMsg.text}`, forwardModalMsg.image || null, forwardModalMsg.audio || null]
     );
 
     setForwardModalMsg(null);
@@ -624,7 +710,6 @@ export default function App() {
     localStorage.setItem('chatrio_user', JSON.stringify(updated));
 
     queryNeon(`UPDATE users SET avatar = $1 WHERE id = $2`, [avatarUrl, currentUser.id]);
-
     showToast('Profile photo updated!');
   };
 
@@ -1138,7 +1223,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* MESSAGES AREA - NO SCROLL GLITCH ON MOBILE KEYBOARD */}
+              {/* MESSAGES AREA */}
               <div className="flex-1 p-4 overflow-y-auto space-y-3 min-h-0" onClick={() => setContextMenuMsg(null)}>
                 {messages.length === 0 ? (
                   <p className="text-center text-xs text-slate-500 my-auto">No messages yet. Say hi to @{activeChat.username}! 👋</p>
@@ -1163,7 +1248,6 @@ export default function App() {
                             isMe ? 'bg-emerald-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-100 rounded-tl-none border border-slate-700/50'
                           }`}
                         >
-                          {/* Options Button */}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1174,7 +1258,6 @@ export default function App() {
                             <MoreVertical className="w-3 h-3" />
                           </button>
 
-                          {/* Quoted Reply Preview Header */}
                           {msg.replyToText && (
                             <div className="bg-black/20 border-l-2 border-emerald-300 p-1.5 rounded text-[10px] mb-1.5 text-slate-200">
                               <p className="font-semibold text-emerald-200 flex items-center gap-1">
@@ -1184,7 +1267,6 @@ export default function App() {
                             </div>
                           )}
 
-                          {/* Deleted for Everyone text */}
                           {msg.isDeletedEveryone ? (
                             <p className="text-xs italic opacity-70 flex items-center gap-1">
                               <Trash2 className="w-3 h-3" /> This message was deleted
@@ -1192,18 +1274,22 @@ export default function App() {
                           ) : (
                             <>
                               {msg.image && <img src={msg.image} className="max-w-xs rounded-xl mb-2 object-cover" alt="" />}
+                              {msg.audio && (
+                                <div className="mb-2 flex items-center gap-2 bg-black/20 p-2 rounded-xl">
+                                  <Volume2 className="w-4 h-4 text-emerald-300 flex-shrink-0 animate-pulse" />
+                                  <audio controls src={msg.audio} className="h-8 w-48 sm:w-56" />
+                                </div>
+                              )}
                               <p className="text-xs leading-relaxed">{msg.text}</p>
                             </>
                           )}
 
-                          {/* Emoji Reaction Badge */}
                           {msg.reaction && (
                             <div className="absolute -bottom-2 left-2 bg-slate-900 border border-slate-700 rounded-full px-1.5 py-0.5 text-xs shadow-lg">
                               {msg.reaction}
                             </div>
                           )}
 
-                          {/* Sent/Seen Status Indicators */}
                           <div className="flex items-center justify-end gap-1 mt-1 text-[10px] opacity-80">
                             {isMe && !msg.isDeletedEveryone && (
                               <span>
@@ -1246,24 +1332,46 @@ export default function App() {
                 </div>
               )}
 
-              {/* FIXED MESSAGE INPUT BAR */}
-              <div className="p-3 border-t border-slate-800/80 bg-slate-900/90 flex items-center space-x-2 flex-shrink-0">
-                <label className="p-2 text-slate-400 hover:text-emerald-400 cursor-pointer transition-colors">
-                  <Paperclip className="w-5 h-5" />
-                  <input type="file" accept="image/*" className="hidden" onChange={handleImageAttachment} />
-                </label>
-                <input
-                  type="text"
-                  value={messageInput}
-                  onChange={(e) => setMessageInput(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                  placeholder="Type a message..."
-                  className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl py-2.5 px-4 text-base sm:text-xs text-white focus:outline-none focus:border-emerald-500"
-                />
-                <button onClick={handleSendMessage} className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-lg shadow-emerald-600/30 hover:bg-emerald-500 transition-colors">
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
+              {/* VOICE RECORDING BAR / FIXED INPUT BAR */}
+              {isRecordingAudio ? (
+                <div className="p-3 border-t border-slate-800/80 bg-red-950/40 flex items-center justify-between space-x-3 flex-shrink-0 animate-pulse">
+                  <div className="flex items-center space-x-2">
+                    <span className="w-3 h-3 rounded-full bg-red-500 animate-ping"></span>
+                    <span className="text-xs font-semibold text-red-400">Recording voice note... ({recordingDuration}s)</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button onClick={cancelAudioRecording} className="px-3 py-1.5 bg-slate-800 text-slate-300 hover:text-white rounded-xl text-xs font-medium">
+                      Cancel
+                    </button>
+                    <button onClick={stopAndSendAudioMessage} className="px-3.5 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1 shadow-lg shadow-red-600/30">
+                      <Square className="w-3.5 h-3.5 fill-current" /> Send Note
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 border-t border-slate-800/80 bg-slate-900/90 flex items-center space-x-2 flex-shrink-0">
+                  <label className="p-2 text-slate-400 hover:text-emerald-400 cursor-pointer transition-colors">
+                    <Paperclip className="w-5 h-5" />
+                    <input type="file" accept="image/*" className="hidden" onChange={handleImageAttachment} />
+                  </label>
+
+                  <button onClick={startRecordingAudio} className="p-2 text-slate-400 hover:text-red-400 transition-colors" title="Hold to record voice note">
+                    <Mic className="w-5 h-5" />
+                  </button>
+
+                  <input
+                    type="text"
+                    value={messageInput}
+                    onChange={(e) => setMessageInput(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                    placeholder="Type a message..."
+                    className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl py-2.5 px-4 text-base sm:text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                  <button onClick={handleSendMessage} className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-lg shadow-emerald-600/30 hover:bg-emerald-500 transition-colors">
+                    <Send className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </main>
@@ -1323,10 +1431,10 @@ export default function App() {
         </div>
       )}
 
-      {/* LONG PRESS / MESSAGE CONTEXT MENU POPUP */}
+      {/* MESSAGE CONTEXT MENU POPUP */}
       {contextMenuMsg && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-xs p-4 space-y-3 shadow-2xl animate-in zoom-in-95">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-xs p-4 space-y-3 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <span className="text-xs font-bold text-slate-300">Message Actions</span>
               <button onClick={() => setContextMenuMsg(null)} className="text-slate-400 hover:text-white">
@@ -1334,7 +1442,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Quick Emoji Reactions */}
             <div className="flex items-center justify-between bg-slate-800/80 p-2 rounded-2xl">
               {['👍', '❤️', '😂', '😮', '😢', '🙏'].map((emoji) => (
                 <button
