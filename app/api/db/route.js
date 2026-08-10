@@ -1,13 +1,8 @@
 import { neon } from '@neondatabase/serverless';
 import { NextResponse } from 'next/server';
 
-/**
- * Ensures required tables (users, messages, requests) exist in Neon DB
- * and automatically repairs column type mismatches (e.g. text ID vs integer ID).
- */
 async function ensureCorrectSchema(sql) {
   try {
-    // 1. Create users table if not exists
     await sql.query(`
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -20,7 +15,6 @@ async function ensureCorrectSchema(sql) {
       );
     `);
 
-    // 2. Auto-repair schema if users.id was mistakenly created as an integer
     await sql.query(`
       DO $$ 
       BEGIN 
@@ -45,7 +39,6 @@ async function ensureCorrectSchema(sql) {
       END $$;
     `);
 
-    // 3. Create messages table if not exists
     await sql.query(`
       CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
@@ -53,11 +46,23 @@ async function ensureCorrectSchema(sql) {
         receiver_id TEXT NOT NULL,
         text TEXT,
         image TEXT,
+        reaction TEXT DEFAULT '',
+        reply_to_id INTEGER DEFAULT NULL,
+        reply_to_text TEXT DEFAULT '',
+        is_deleted_everyone BOOLEAN DEFAULT FALSE,
+        deleted_by_users TEXT DEFAULT '',
+        seen_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
 
-    // 4. Create friend/chat requests table if not exists
+    await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reaction TEXT DEFAULT '';`);
+    await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER DEFAULT NULL;`);
+    await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_text TEXT DEFAULT '';`);
+    await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_deleted_everyone BOOLEAN DEFAULT FALSE;`);
+    await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_by_users TEXT DEFAULT '';`);
+    await sql.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS seen_at TIMESTAMP;`);
+
     await sql.query(`
       CREATE TABLE IF NOT EXISTS requests (
         id SERIAL PRIMARY KEY,
@@ -69,13 +74,10 @@ async function ensureCorrectSchema(sql) {
       );
     `);
   } catch (err) {
-    console.error('Auto schema fix error:', err);
+    console.error('Auto schema migration error:', err);
   }
 }
 
-/**
- * GET Handler - Used for diagnostic health check and auto-fixing DB schema
- */
 export async function GET() {
   try {
     const dbUrl = process.env.DATABASE_URL;
@@ -92,7 +94,7 @@ export async function GET() {
     const result = await sql.query(`SELECT NOW()`);
     return NextResponse.json({ 
       status: 'success', 
-      message: '✅ Chatrio by ED - Database Connected & Schema Auto-Fixed Successfully!', 
+      message: '✅ Chatrio by ED Database Schema fully updated with reaction, reply & unsent features!', 
       serverTime: result[0]?.now 
     });
   } catch (error) {
@@ -103,9 +105,6 @@ export async function GET() {
   }
 }
 
-/**
- * POST Handler - Executes dynamic SQL queries sent by the frontend
- */
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -129,10 +128,10 @@ export async function POST(request) {
         rows = await sql(sqlQuery, params);
       }
     } catch (queryErr) {
-      // Auto-repair schema if table or type mismatch error occurs, then retry
       if (
         String(queryErr).includes('invalid input syntax for type integer') || 
-        String(queryErr).includes('does not exist')
+        String(queryErr).includes('does not exist') ||
+        String(queryErr).includes('column')
       ) {
         console.log('Auto-repairing Chatrio database schema...');
         await ensureCorrectSchema(sql);

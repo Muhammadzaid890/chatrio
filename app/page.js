@@ -8,7 +8,6 @@ import {
   User,
   Circle,
   Search,
-  Plus,
   Send,
   Paperclip,
   PhoneOff,
@@ -18,7 +17,19 @@ import {
   Camera,
   X,
   CheckCircle2,
-  ArrowLeft
+  ArrowLeft,
+  UserPlus,
+  Clock,
+  Check,
+  CheckCheck,
+  UserX,
+  Bell,
+  MoreVertical,
+  Reply,
+  Trash2,
+  CornerDownRight,
+  Smile,
+  Share2
 } from 'lucide-react';
 
 const CLOUDINARY_CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || 'hp0bmfy7';
@@ -40,7 +51,7 @@ export default function App() {
     username: '',
     email: '',
     avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-    bio: 'Hey there! I am using Chatrio by Zaid 🚀'
+    bio: 'Hey there! I am using Chatrio by ED 🚀'
   });
 
   const [activeTab, setActiveTab] = useState('chats');
@@ -51,17 +62,23 @@ export default function App() {
   const [searchedUsers, setSearchedUsers] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
 
+  const [incomingRequests, setIncomingRequests] = useState([]);
+  const [showRequestsModal, setShowRequestsModal] = useState(false);
+
   const [showCreateStatusModal, setShowCreateStatusModal] = useState(false);
   const [activeStatusViewer, setActiveStatusViewer] = useState(null);
 
   const [currentCall, setCurrentCall] = useState(null);
-  const localVideoRef = useRef(null);
-  const remoteVideoRef = useRef(null);
   const mediaStreamRef = useRef(null);
 
   const [messageInput, setMessageInput] = useState('');
   const [statusTextInput, setStatusTextInput] = useState('');
   const [toastMessage, setToastMessage] = useState('');
+
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [contextMenuMsg, setContextMenuMsg] = useState(null);
+  const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
+  const [forwardModalMsg, setForwardModalMsg] = useState(null);
 
   const [profileForm, setProfileForm] = useState({
     username: '',
@@ -94,6 +111,20 @@ export default function App() {
       showToast('Network error connecting to database');
       return null;
     }
+  };
+
+  const formatTimeAgo = (dateStr) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const diffInSeconds = Math.floor((new Date() - date) / 1000);
+
+    if (diffInSeconds < 15) return 'just now';
+    if (diffInSeconds < 60) return `${diffInSeconds}s ago`;
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
+
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
   const formatLastSeen = (lastSeenTime) => {
@@ -133,7 +164,7 @@ export default function App() {
         setProfileForm({
           username: parsedUser.username || '',
           email: parsedUser.email || '',
-          bio: parsedUser.bio || 'Hey there! I am using Chatrio by Zaid 🚀'
+          bio: parsedUser.bio || 'Hey there! I am using Chatrio by ED 🚀'
         });
         setIsLoggedIn(true);
       }
@@ -146,7 +177,6 @@ export default function App() {
     if (!currentUser.id) return;
 
     const updateHeartbeat = async () => {
-      await queryNeon(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP DEFAULT NOW();`);
       await queryNeon(`UPDATE users SET last_seen = NOW() WHERE id = $1`, [currentUser.id]);
     };
 
@@ -157,18 +187,99 @@ export default function App() {
     }, 10000);
 
     return () => clearInterval(heartbeatInterval);
-  }, [currentUser]);
+  }, [currentUser.id]);
+
+  const loadAcceptedChatsAndRequests = async () => {
+    if (!currentUser.id) return;
+
+    const reqRes = await queryNeon(
+      `SELECT r.id as request_id, r.sender_id, u.username, u.avatar, u.bio, u.last_seen 
+       FROM requests r 
+       JOIN users u ON r.sender_id = u.id 
+       WHERE r.receiver_id = $1 AND r.status = 'pending'`,
+      [currentUser.id]
+    );
+
+    if (reqRes && reqRes.rows) {
+      setIncomingRequests(reqRes.rows);
+    }
+
+    const friendsRes = await queryNeon(
+      `SELECT u.id, u.username, u.email, u.avatar, u.bio, u.last_seen 
+       FROM requests r 
+       JOIN users u ON (CASE WHEN r.sender_id = $1 THEN r.receiver_id ELSE r.sender_id END) = u.id 
+       WHERE (r.sender_id = $1 OR r.receiver_id = $1) AND r.status = 'accepted'`,
+      [currentUser.id]
+    );
+
+    if (friendsRes && friendsRes.rows) {
+      const formattedChats = friendsRes.rows.map((peer) => ({
+        id: peer.id,
+        peerUserId: peer.id,
+        username: peer.username,
+        avatar: peer.avatar,
+        bio: peer.bio,
+        last_seen: peer.last_seen
+      }));
+
+      setChats(formattedChats);
+    }
+  };
+
+  useEffect(() => {
+    if (!currentUser.id) return;
+
+    loadAcceptedChatsAndRequests();
+    const interval = setInterval(loadAcceptedChatsAndRequests, 4000);
+    return () => clearInterval(interval);
+  }, [currentUser.id]);
 
   useEffect(() => {
     if (!currentUser.id || !activeChat) return;
 
     const syncChatDetails = async () => {
-      const savedMsgs = JSON.parse(localStorage.getItem(`msgs_${currentUser.id}_${activeChat.id}`) || '[]');
-      setMessages(savedMsgs);
+      await queryNeon(
+        `UPDATE messages SET seen_at = NOW() 
+         WHERE receiver_id = $1 AND sender_id = $2 AND seen_at IS NULL`,
+        [currentUser.id, activeChat.id]
+      );
 
-      const res = await queryNeon(`SELECT last_seen, avatar, bio FROM users WHERE id = $1 OR LOWER(username) = $2`, [activeChat.peerUserId || '', activeChat.username.toLowerCase()]);
-      if (res && res.rows && res.rows[0]) {
-        const peerData = res.rows[0];
+      const msgRes = await queryNeon(
+        `SELECT id, sender_id, receiver_id, text, image, reaction, reply_to_id, reply_to_text, is_deleted_everyone, deleted_by_users, seen_at, created_at FROM messages 
+         WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1) 
+         ORDER BY id ASC`,
+        [currentUser.id, activeChat.id]
+      );
+
+      if (msgRes && msgRes.rows) {
+        const filteredMsgs = msgRes.rows
+          .filter((m) => {
+            const deletedBy = (m.deleted_by_users || '').split(',');
+            return !deletedBy.includes(currentUser.id);
+          })
+          .map((m) => ({
+            id: m.id,
+            senderId: m.sender_id,
+            receiverId: m.receiver_id,
+            text: m.text,
+            image: m.image,
+            reaction: m.reaction,
+            replyToId: m.reply_to_id,
+            replyToText: m.reply_to_text,
+            isDeletedEveryone: m.is_deleted_everyone,
+            createdAt: m.created_at,
+            seenAt: m.seen_at
+          }));
+        setMessages(filteredMsgs);
+      }
+
+      const peerRes = await queryNeon(
+        `SELECT last_seen, avatar, bio FROM users WHERE id = $1`,
+        [activeChat.peerUserId || activeChat.id]
+      );
+
+      if (peerRes && peerRes.rows && peerRes.rows[0]) {
+        const peerData = peerRes.rows[0];
         setActiveChat((prev) => prev ? {
           ...prev,
           last_seen: peerData.last_seen,
@@ -179,10 +290,10 @@ export default function App() {
     };
 
     syncChatDetails();
-    const syncInterval = setInterval(syncChatDetails, 3000);
+    const syncInterval = setInterval(syncChatDetails, 2000);
 
     return () => clearInterval(syncInterval);
-  }, [currentUser, activeChat?.id]);
+  }, [currentUser.id, activeChat?.id]);
 
   const uploadToCloudinary = async (file) => {
     try {
@@ -222,7 +333,7 @@ export default function App() {
 
       showToast('Creating account...');
       const dbCheck = await queryNeon(`SELECT * FROM users WHERE LOWER(username) = $1`, [cleanUsername]);
-      if (!dbCheck) return; // Error toast will be displayed by queryNeon
+      if (!dbCheck) return;
 
       let existingUser = dbCheck && dbCheck.rows && dbCheck.rows[0];
 
@@ -238,11 +349,10 @@ export default function App() {
         email: cleanEmail,
         password: authForm.password,
         avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-        bio: 'Hey there! I am using Chatrio by Zaid 🚀',
+        bio: 'Hey there! I am using Chatrio by ED 🚀',
         last_seen: new Date().toISOString()
       };
 
-      await queryNeon(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP DEFAULT NOW();`);
       const insertRes = await queryNeon(
         `INSERT INTO users (id, username, email, password, avatar, bio, last_seen) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
         [newUser.id, newUser.username, newUser.email, newUser.password, newUser.avatar, newUser.bio]
@@ -295,28 +405,70 @@ export default function App() {
     const cleanQ = query.trim().toLowerCase();
 
     const dbRes = await queryNeon(
-      `SELECT id, username, email, avatar, bio, last_seen FROM users WHERE LOWER(username) LIKE $1 AND id != $2`,
-      [`%${cleanQ}%`, currentUser.id]
+      `SELECT u.id, u.username, u.email, u.avatar, u.bio, u.last_seen,
+              r.status as request_status, r.sender_id as request_sender
+       FROM users u
+       LEFT JOIN requests r ON ((r.sender_id = $1 AND r.receiver_id = u.id) OR (r.sender_id = u.id AND r.receiver_id = $1))
+       WHERE LOWER(u.username) LIKE $2 AND u.id != $1`,
+      [currentUser.id, `%${cleanQ}%`]
     );
 
     let matches = dbRes && dbRes.rows ? dbRes.rows : [];
     setSearchedUsers(matches);
   };
 
-  const startChatWithUser = (targetUser) => {
-    let existingChat = chats.find((c) => c.peerUserId === targetUser.id || c.username === targetUser.username);
+  const handleSendRequest = async (targetUser) => {
+    showToast(`Sending request to @${targetUser.username}...`);
 
-    if (!existingChat) {
-      existingChat = {
-        id: targetUser.id || 'chat_' + Date.now(),
-        peerUserId: targetUser.id,
-        username: targetUser.username,
-        avatar: targetUser.avatar,
-        bio: targetUser.bio,
-        last_seen: targetUser.last_seen
-      };
-      setChats((prev) => [existingChat, ...prev]);
+    const res = await queryNeon(
+      `INSERT INTO requests (sender_id, receiver_id, status) VALUES ($1, $2, 'pending')
+       ON CONFLICT (sender_id, receiver_id) DO UPDATE SET status = 'pending'`,
+      [currentUser.id, targetUser.id]
+    );
+
+    if (res) {
+      showToast(`Request sent to @${targetUser.username}!`);
+      handleSearchUsers(searchQuery);
     }
+  };
+
+  const handleAcceptRequest = async (senderId, senderUsername) => {
+    showToast(`Accepting request from @${senderUsername}...`);
+
+    const res = await queryNeon(
+      `UPDATE requests SET status = 'accepted' 
+       WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1)`,
+      [senderId, currentUser.id]
+    );
+
+    if (res) {
+      showToast(`You are now connected with @${senderUsername}! 🎉`);
+      loadAcceptedChatsAndRequests();
+      if (searchQuery) handleSearchUsers(searchQuery);
+    }
+  };
+
+  const handleDeclineRequest = async (senderId) => {
+    await queryNeon(
+      `DELETE FROM requests 
+       WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1)`,
+      [senderId, currentUser.id]
+    );
+
+    showToast('Request declined');
+    loadAcceptedChatsAndRequests();
+    if (searchQuery) handleSearchUsers(searchQuery);
+  };
+
+  const openAcceptedChat = (targetUser) => {
+    let existingChat = {
+      id: targetUser.id,
+      peerUserId: targetUser.id,
+      username: targetUser.username,
+      avatar: targetUser.avatar,
+      bio: targetUser.bio,
+      last_seen: targetUser.last_seen
+    };
 
     setActiveChat(existingChat);
     setMobileChatOpen(true);
@@ -324,34 +476,37 @@ export default function App() {
     setSearchedUsers([]);
     setIsSearching(false);
     setActiveTab('chats');
-
-    const savedMsgs = JSON.parse(localStorage.getItem(`msgs_${currentUser.id}_${existingChat.id}`) || '[]');
-    setMessages(savedMsgs);
   };
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!messageInput.trim() || !activeChat) return;
 
-    const newMsg = {
-      id: 'msg_' + Date.now(),
-      senderId: currentUser.id,
-      receiverId: activeChat.id,
-      text: messageInput.trim(),
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-
-    const updated = [...messages, newMsg];
-    setMessages(updated);
-
-    localStorage.setItem(`msgs_${currentUser.id}_${activeChat.id}`, JSON.stringify(updated));
-    localStorage.setItem(`msgs_${activeChat.id}_${currentUser.id}`, JSON.stringify(updated));
-
-    queryNeon(
-      `INSERT INTO messages (sender_id, receiver_id, text) VALUES ($1, $2, $3)`,
-      [currentUser.id, activeChat.id, messageInput.trim()]
-    );
+    const textMsg = messageInput.trim();
+    const replyId = replyingTo ? replyingTo.id : null;
+    const replyText = replyingTo ? replyingTo.text : '';
 
     setMessageInput('');
+    setReplyingTo(null);
+
+    const res = await queryNeon(
+      `INSERT INTO messages (sender_id, receiver_id, text, reply_to_id, reply_to_text) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [currentUser.id, activeChat.id, textMsg, replyId, replyText]
+    );
+
+    if (res && res.rows && res.rows[0]) {
+      const row = res.rows[0];
+      const newMsg = {
+        id: row.id,
+        senderId: currentUser.id,
+        receiverId: activeChat.id,
+        text: textMsg,
+        replyToId: replyId,
+        replyToText: replyText,
+        createdAt: row.created_at,
+        seenAt: null
+      };
+      setMessages((prev) => [...prev, newMsg]);
+    }
   };
 
   const handleImageAttachment = async (e) => {
@@ -361,20 +516,69 @@ export default function App() {
     showToast('Uploading photo...');
     const imageUrl = await uploadToCloudinary(file);
 
-    const newMsg = {
-      id: 'msg_' + Date.now(),
-      senderId: currentUser.id,
-      receiverId: activeChat.id,
-      text: '📷 Photo Attachment',
-      image: imageUrl,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
+    const res = await queryNeon(
+      `INSERT INTO messages (sender_id, receiver_id, text, image) VALUES ($1, $2, $3, $4) RETURNING *`,
+      [currentUser.id, activeChat.id, '📷 Photo Attachment', imageUrl]
+    );
 
-    const updated = [...messages, newMsg];
-    setMessages(updated);
-    localStorage.setItem(`msgs_${currentUser.id}_${activeChat.id}`, JSON.stringify(updated));
-    localStorage.setItem(`msgs_${activeChat.id}_${currentUser.id}`, JSON.stringify(updated));
-    showToast('Photo uploaded!');
+    if (res && res.rows && res.rows[0]) {
+      const row = res.rows[0];
+      showToast('Photo sent!');
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: row.id,
+          senderId: currentUser.id,
+          receiverId: activeChat.id,
+          text: '📷 Photo Attachment',
+          image: imageUrl,
+          createdAt: row.created_at,
+          seenAt: null
+        }
+      ]);
+    }
+  };
+
+  const handleAddReaction = async (msgId, emoji) => {
+    setContextMenuMsg(null);
+    await queryNeon(`UPDATE messages SET reaction = $1 WHERE id = $2`, [emoji, msgId]);
+    setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, reaction: emoji } : m));
+  };
+
+  const handleUnsendEveryone = async (msgId) => {
+    setContextMenuMsg(null);
+    showToast('Unsending message...');
+    await queryNeon(`UPDATE messages SET is_deleted_everyone = TRUE WHERE id = $1`, [msgId]);
+    setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, isDeletedEveryone: true } : m));
+  };
+
+  const handleDeleteForMe = async (msgId) => {
+    setContextMenuMsg(null);
+    showToast('Message deleted for you');
+
+    const msg = messages.find((m) => m.id === msgId);
+    if (!msg) return;
+
+    const res = await queryNeon(`SELECT deleted_by_users FROM messages WHERE id = $1`, [msgId]);
+    let existingDeleted = (res && res.rows && res.rows[0] && res.rows[0].deleted_by_users) || '';
+    let updatedList = existingDeleted ? `${existingDeleted},${currentUser.id}` : currentUser.id;
+
+    await queryNeon(`UPDATE messages SET deleted_by_users = $1 WHERE id = $2`, [updatedList, msgId]);
+    setMessages((prev) => prev.filter((m) => m.id !== msgId));
+  };
+
+  const handleForwardMessage = async (targetChat) => {
+    if (!forwardModalMsg) return;
+
+    showToast(`Forwarding to @${targetChat.username}...`);
+
+    await queryNeon(
+      `INSERT INTO messages (sender_id, receiver_id, text, image) VALUES ($1, $2, $3, $4)`,
+      [currentUser.id, targetChat.id, `↪️ ${forwardModalMsg.text}`, forwardModalMsg.image || null]
+    );
+
+    setForwardModalMsg(null);
+    showToast(`Message forwarded to @${targetChat.username}!`);
   };
 
   const handleAvatarChange = async (e) => {
@@ -447,17 +651,6 @@ export default function App() {
       time: 'Just now'
     };
     setCallLogs((prev) => [newCallLog, ...prev]);
-
-    if (callType === 'video') {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        mediaStreamRef.current = stream;
-        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream;
-      } catch (err) {
-        console.warn('Camera feed unavailable:', err);
-      }
-    }
   };
 
   const endCall = () => {
@@ -594,6 +787,19 @@ export default function App() {
 
         <div className="flex items-center space-x-2.5">
           <button
+            onClick={() => setShowRequestsModal(true)}
+            className="relative w-10 h-10 rounded-xl bg-slate-800/60 flex items-center justify-center text-slate-300 hover:bg-slate-700/60 transition-all"
+            title="Friend Requests"
+          >
+            <Bell className="w-5 h-5 text-emerald-400" />
+            {incomingRequests.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center animate-pulse">
+                {incomingRequests.length}
+              </span>
+            )}
+          </button>
+
+          <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
             className="w-10 h-10 rounded-xl bg-slate-800/60 flex items-center justify-center text-slate-300 hover:bg-slate-700/60 transition-all"
           >
@@ -637,7 +843,7 @@ export default function App() {
             </button>
           </div>
 
-          {/* REAL-TIME NEON DB SEARCH BAR */}
+          {/* SEARCH BAR */}
           <div className="p-3 border-b border-slate-800/60 relative">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-500" />
@@ -645,37 +851,71 @@ export default function App() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => handleSearchUsers(e.target.value)}
-                placeholder="Search @username..."
+                placeholder="Search @username to send request..."
                 className="w-full bg-slate-800/50 border border-slate-700/60 rounded-xl py-2.5 pl-10 pr-4 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
-            {/* NEON SEARCH RESULTS */}
             {isSearching && (
-              <div className="absolute top-full left-0 right-0 bg-slate-900 border border-slate-800 rounded-b-2xl shadow-2xl z-30 p-2 max-h-60 overflow-y-auto">
+              <div className="absolute top-full left-0 right-0 bg-slate-900 border border-slate-800 rounded-b-2xl shadow-2xl z-30 p-2 max-h-72 overflow-y-auto">
                 <p className="text-[10px] text-slate-400 uppercase tracking-wider px-2 py-1 font-semibold">
-                  Users Found
+                  Search Results
                 </p>
                 {searchedUsers.length === 0 ? (
                   <p className="text-xs text-slate-500 p-3 text-center">No registered user found with @{searchQuery}</p>
                 ) : (
                   searchedUsers.map((u) => {
                     const isUserOnline = u.last_seen && ((new Date() - new Date(u.last_seen)) / 1000) < 20;
+                    const status = u.request_status;
+                    const isSender = u.request_sender === currentUser.id;
+
                     return (
                       <div
                         key={u.id}
-                        onClick={() => startChatWithUser(u)}
-                        className="flex items-center space-x-3 p-2.5 hover:bg-slate-800 rounded-xl cursor-pointer transition-colors"
+                        className="flex items-center justify-between p-2.5 hover:bg-slate-800/80 rounded-xl transition-colors"
                       >
-                        <div className="relative">
-                          <img src={u.avatar} className="w-9 h-9 rounded-full object-cover" alt="" />
-                          <span className={`w-2.5 h-2.5 rounded-full absolute bottom-0 right-0 border-2 border-slate-900 ${isUserOnline ? 'bg-emerald-500' : 'bg-slate-500'}`}></span>
+                        <div className="flex items-center space-x-2.5 min-w-0 pr-2">
+                          <div className="relative flex-shrink-0">
+                            <img src={u.avatar} className="w-9 h-9 rounded-full object-cover" alt="" />
+                            <span className={`w-2.5 h-2.5 rounded-full absolute bottom-0 right-0 border-2 border-slate-900 ${isUserOnline ? 'bg-emerald-500' : 'bg-slate-500'}`}></span>
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="font-semibold text-xs text-white truncate">@{u.username}</h4>
+                            <p className="text-[10px] text-emerald-400">{formatLastSeen(u.last_seen)}</p>
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <h4 className="font-semibold text-xs text-white">@{u.username}</h4>
-                          <p className="text-[10px] text-emerald-400">{formatLastSeen(u.last_seen)}</p>
+
+                        <div>
+                          {status === 'accepted' ? (
+                            <button
+                              onClick={() => openAcceptedChat(u)}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 shadow-md"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" /> Chat
+                            </button>
+                          ) : status === 'pending' && isSender ? (
+                            <button
+                              disabled
+                              className="px-3 py-1.5 bg-slate-800 text-slate-400 rounded-lg text-xs font-medium flex items-center gap-1 cursor-not-allowed border border-slate-700"
+                            >
+                              <Clock className="w-3.5 h-3.5 text-amber-400" /> Pending
+                            </button>
+                          ) : status === 'pending' && !isSender ? (
+                            <button
+                              onClick={() => handleAcceptRequest(u.id, u.username)}
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 shadow-md"
+                            >
+                              <Check className="w-3.5 h-3.5" /> Accept
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleSendRequest(u)}
+                              className="px-3 py-1.5 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white border border-emerald-500/40 rounded-lg text-xs font-medium flex items-center gap-1 transition-all"
+                            >
+                              <UserPlus className="w-3.5 h-3.5" /> Request
+                            </button>
+                          )}
                         </div>
-                        <Plus className="w-4 h-4 text-emerald-400" />
                       </div>
                     );
                   })
@@ -690,8 +930,11 @@ export default function App() {
               <div className="p-2 space-y-1">
                 {chats.length === 0 ? (
                   <div className="p-8 text-center text-xs text-slate-500">
+                    <UserPlus className="w-10 h-10 text-emerald-500/40 mx-auto mb-2" />
                     <p className="font-semibold text-slate-400">No active conversations</p>
-                    <p className="mt-1 text-[11px]">Type a registered @username in the search bar above to start messaging!</p>
+                    <p className="mt-1 text-[11px] max-w-xs mx-auto">
+                      Search @username in the search bar above to send a request. Once accepted, chats stay here permanently!
+                    </p>
                   </div>
                 ) : (
                   chats.map((chat) => (
@@ -701,7 +944,9 @@ export default function App() {
                         setActiveChat(chat);
                         setMobileChatOpen(true);
                       }}
-                      className="flex items-center space-x-3 p-3 rounded-2xl cursor-pointer hover:bg-slate-800/40 transition-colors"
+                      className={`flex items-center space-x-3 p-3 rounded-2xl cursor-pointer transition-colors ${
+                        activeChat?.id === chat.id ? 'bg-slate-800 border border-slate-700/60' : 'hover:bg-slate-800/40'
+                      }`}
                     >
                       <div className="relative">
                         <img src={chat.avatar} className="w-12 h-12 rounded-full object-cover" alt="" />
@@ -832,21 +1077,114 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex-1 p-4 overflow-y-auto space-y-3">
-                {messages.map((msg) => {
-                  const isMe = msg.senderId === currentUser.id;
-                  return (
-                    <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[80%] p-3 rounded-2xl shadow-md ${isMe ? 'bg-emerald-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-100 rounded-tl-none border border-slate-700/50'}`}>
-                        {msg.image && <img src={msg.image} className="max-w-xs rounded-xl mb-2 object-cover" alt="" />}
-                        <p className="text-xs">{msg.text}</p>
-                        <span className="text-[9px] opacity-70 block text-right mt-1">{msg.time}</span>
+              {/* MESSAGES AREA WITH LONG PRESS & OPTIONS */}
+              <div className="flex-1 p-4 overflow-y-auto space-y-3" onClick={() => setContextMenuMsg(null)}>
+                {messages.length === 0 ? (
+                  <p className="text-center text-xs text-slate-500 my-auto">No messages yet. Say hi to @{activeChat.username}! 👋</p>
+                ) : (
+                  messages.map((msg) => {
+                    const isMe = msg.senderId === currentUser.id;
+                    const isSeen = Boolean(msg.seenAt);
+                    const sentTimeText = formatTimeAgo(msg.createdAt);
+                    const seenTimeText = msg.seenAt ? formatTimeAgo(msg.seenAt) : '';
+
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`flex ${isMe ? 'justify-end' : 'justify-start'} group relative`}
+                      >
+                        <div
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setContextMenuMsg(msg);
+                          }}
+                          className={`max-w-[80%] p-3 rounded-2xl shadow-md relative group/msg ${
+                            isMe ? 'bg-emerald-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-100 rounded-tl-none border border-slate-700/50'
+                          }`}
+                        >
+                          {/* Options Button */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setContextMenuMsg(msg);
+                            }}
+                            className="absolute top-1 right-1 opacity-0 group-hover/msg:opacity-100 p-1 bg-black/30 rounded-full text-white transition-opacity"
+                          >
+                            <MoreVertical className="w-3 h-3" />
+                          </button>
+
+                          {/* Quoted Reply Preview Header */}
+                          {msg.replyToText && (
+                            <div className="bg-black/20 border-l-2 border-emerald-300 p-1.5 rounded text-[10px] mb-1.5 text-slate-200">
+                              <p className="font-semibold text-emerald-200 flex items-center gap-1">
+                                <CornerDownRight className="w-2.5 h-2.5" /> Replying to
+                              </p>
+                              <p className="truncate opacity-90">{msg.replyToText}</p>
+                            </div>
+                          )}
+
+                          {/* Deleted for Everyone text */}
+                          {msg.isDeletedEveryone ? (
+                            <p className="text-xs italic opacity-70 flex items-center gap-1">
+                              <Trash2 className="w-3 h-3" /> This message was deleted
+                            </p>
+                          ) : (
+                            <>
+                              {msg.image && <img src={msg.image} className="max-w-xs rounded-xl mb-2 object-cover" alt="" />}
+                              <p className="text-xs">{msg.text}</p>
+                            </>
+                          )}
+
+                          {/* Emoji Reaction Badge */}
+                          {msg.reaction && (
+                            <div className="absolute -bottom-2 left-2 bg-slate-900 border border-slate-700 rounded-full px-1.5 py-0.5 text-xs shadow-lg">
+                              {msg.reaction}
+                            </div>
+                          )}
+
+                          {/* Sent/Seen Status Indicators */}
+                          <div className="flex items-center justify-end gap-1 mt-1 text-[10px] opacity-80">
+                            {isMe && !msg.isDeletedEveryone && (
+                              <span>
+                                {isSeen ? (
+                                  <span className="flex items-center gap-1 text-cyan-200 font-medium">
+                                    <CheckCheck className="w-3 h-3 text-cyan-300" /> Seen {seenTimeText}
+                                  </span>
+                                ) : (
+                                  <span className="flex items-center gap-1 text-emerald-200">
+                                    <Check className="w-3 h-3 text-emerald-200" /> Sent {sentTimeText}
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                            {!isMe && !msg.isDeletedEveryone && (
+                              <span className="text-slate-400">{sentTimeText}</span>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
 
+              {/* REPLY PREVIEW BOX */}
+              {replyingTo && (
+                <div className="bg-slate-800/90 border-t border-slate-700 p-2.5 flex items-center justify-between text-xs text-white">
+                  <div className="flex items-center space-x-2 min-w-0 pr-2">
+                    <Reply className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="font-semibold text-emerald-400 text-[11px]">Replying to message</p>
+                      <p className="text-slate-300 truncate text-[10px]">{replyingTo.text}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setReplyingTo(null)} className="p-1 text-slate-400 hover:text-white">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* MESSAGE INPUT */}
               <div className="p-3 border-t flex items-center space-x-2">
                 <label className="p-2 text-slate-400 hover:text-emerald-400 cursor-pointer transition-colors">
                   <Paperclip className="w-5 h-5" />
@@ -868,6 +1206,152 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* LONG PRESS / MESSAGE CONTEXT MENU POPUP */}
+      {contextMenuMsg && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-xs p-4 space-y-3 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <span className="text-xs font-bold text-slate-300">Message Actions</span>
+              <button onClick={() => setContextMenuMsg(null)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Quick Emoji Reactions */}
+            <div className="flex items-center justify-between bg-slate-800/80 p-2 rounded-2xl">
+              {['👍', '❤️', '😂', '😮', '😢', '🙏'].map((emoji) => (
+                <button
+                  key={emoji}
+                  onClick={() => handleAddReaction(contextMenuMsg.id, emoji)}
+                  className="text-lg hover:scale-125 transition-transform p-1"
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-1 text-xs">
+              <button
+                onClick={() => {
+                  setReplyingTo(contextMenuMsg);
+                  setContextMenuMsg(null);
+                }}
+                className="w-full p-2.5 bg-slate-800/50 hover:bg-slate-800 rounded-xl text-left text-emerald-400 font-semibold flex items-center gap-2"
+              >
+                <Reply className="w-4 h-4" /> Reply
+              </button>
+
+              <button
+                onClick={() => {
+                  setForwardModalMsg(contextMenuMsg);
+                  setContextMenuMsg(null);
+                }}
+                className="w-full p-2.5 bg-slate-800/50 hover:bg-slate-800 rounded-xl text-left text-blue-400 font-semibold flex items-center gap-2"
+              >
+                <Share2 className="w-4 h-4" /> Forward Message
+              </button>
+
+              <button
+                onClick={() => handleDeleteForMe(contextMenuMsg.id)}
+                className="w-full p-2.5 bg-slate-800/50 hover:bg-slate-800 rounded-xl text-left text-amber-400 font-semibold flex items-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" /> Delete for me
+              </button>
+
+              {contextMenuMsg.senderId === currentUser.id && !contextMenuMsg.isDeletedEveryone && (
+                <button
+                  onClick={() => handleUnsendEveryone(contextMenuMsg.id)}
+                  className="w-full p-2.5 bg-red-600/20 hover:bg-red-600 hover:text-white border border-red-500/30 rounded-xl text-left text-red-400 font-semibold flex items-center gap-2"
+                >
+                  <X className="w-4 h-4" /> Unsend (Delete for Everyone)
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FORWARD MESSAGE MODAL */}
+      {forwardModalMsg && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-sm text-white">Forward Message To...</h3>
+              <button onClick={() => setForwardModalMsg(null)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {chats.map((c) => (
+                <div
+                  key={c.id}
+                  onClick={() => handleForwardMessage(c)}
+                  className="flex items-center justify-between p-2.5 bg-slate-800/50 hover:bg-slate-800 rounded-xl cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center space-x-2.5">
+                    <img src={c.avatar} className="w-9 h-9 rounded-full object-cover" alt="" />
+                    <span className="font-semibold text-xs text-white">@{c.username}</span>
+                  </div>
+                  <Share2 className="w-4 h-4 text-emerald-400" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FRIEND REQUESTS MODAL */}
+      {showRequestsModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-sm flex items-center gap-2 text-white">
+                <Bell className="w-4 h-4 text-emerald-400" /> Incoming Chat Requests
+              </h3>
+              <button onClick={() => setShowRequestsModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-72 overflow-y-auto">
+              {incomingRequests.length === 0 ? (
+                <p className="text-xs text-slate-500 p-4 text-center">No pending chat requests</p>
+              ) : (
+                incomingRequests.map((req) => (
+                  <div key={req.request_id} className="flex items-center justify-between p-3 bg-slate-800/50 rounded-xl border border-slate-700/50">
+                    <div className="flex items-center space-x-2.5 min-w-0 pr-2">
+                      <img src={req.avatar} className="w-10 h-10 rounded-full object-cover" alt="" />
+                      <div className="min-w-0">
+                        <h4 className="font-bold text-xs text-white truncate">@{req.username}</h4>
+                        <p className="text-[10px] text-slate-400 truncate">{req.bio}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-1.5 flex-shrink-0">
+                      <button
+                        onClick={() => handleAcceptRequest(req.sender_id, req.username)}
+                        className="p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg shadow-md"
+                        title="Accept Request"
+                      >
+                        <Check className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDeclineRequest(req.sender_id)}
+                        className="p-2 bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white rounded-lg border border-red-500/30"
+                        title="Decline Request"
+                      >
+                        <UserX className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CALL MODAL */}
       {currentCall && (
